@@ -99,8 +99,7 @@ class GroupedParticipantDataset(Dataset):
             try:
                 seq = load_sequence(
                     self.root, self.split,
-                    str(row["anon_school"]), str(row["anon_class"]),
-                    str(row["anon_pid"]),
+                    str(row["anon_school"]), str(row["anon_class"]), str(row["anon_pid"]),
                     modality, feat_name, str(row["session"]),
                     model_tag=tag,
                 )
