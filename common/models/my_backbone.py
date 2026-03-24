@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from .mtcn_backbone import GroupAdapter, ModalityFusion, DilatedResidualBlock, ASP, TCN
 
 @dataclass
-class MybackboneConfig:
+class DualTCNBackboneConfig:
     audio_group_dims: dict[str, int] = field(default_factory=dict)
     audio_pooled_group_dims: dict[str, int] = field(default_factory=dict)
     video_group_dims: dict[str, int] = field(default_factory=dict)
@@ -57,11 +57,11 @@ class DualTCN(nn.Module):
         return out_audio, out_video
 
 
-class MyBackbone(nn.Module):
+class DualTCNBackbone(nn.Module):
     """
     使用Transformer替换原有的TCN结果，实现早期融合策略
     """
-    def __init__(self, cfg: MybackboneConfig) -> None:
+    def __init__(self, cfg: DualTCNBackboneConfig) -> None:
         super().__init__()
         self.cfg = cfg
 
