@@ -23,6 +23,7 @@ import yaml
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.mtcn_backbone import BackboneConfig, MTCNBackbone
+from .models.my_backbone import MybackboneConfig, MyBackbone
 from .models.heads import A1Head, A2OrdinalHead, a1_loss, a2_ordinal_loss
 from .models.grouped_model import GroupedModel, CORALHead
 from .utils.seed import seed_everything
@@ -832,7 +833,20 @@ def main() -> None:
     audio_pooled_group_dims = {n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims}
     video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
 
-    bb_cfg = BackboneConfig(
+    # bb_cfg = BackboneConfig(
+    #     audio_group_dims=audio_group_dims,
+    #     audio_pooled_group_dims=audio_pooled_group_dims,
+    #     video_group_dims=video_group_dims,
+    #     d_adapter=cfg.get("d_adapter", 64),
+    #     d_model=cfg.get("d_model", 256),
+    #     tcn_layers=cfg.get("tcn_layers", 6),
+    #     tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+    #     asp_alpha=cfg.get("asp_alpha", 0.5),
+    #     asp_beta=cfg.get("asp_beta", 0.5),
+    #     dropout=cfg.get("dropout", 0.2),
+    #     d_shared=cfg.get("d_shared", 256),
+    # )
+    bb_cfg = MybackboneConfig(
         audio_group_dims=audio_group_dims,
         audio_pooled_group_dims=audio_pooled_group_dims,
         video_group_dims=video_group_dims,
@@ -846,7 +860,8 @@ def main() -> None:
         d_shared=cfg.get("d_shared", 256),
     )
 
-    backbone = MTCNBackbone(bb_cfg)
+    # backbone = MTCNBackbone(bb_cfg)
+    backbone = MyBackbone(bb_cfg)
     grouped_model = GroupedModel(
         backbone=backbone,
         d_shared=bb_cfg.d_shared,
