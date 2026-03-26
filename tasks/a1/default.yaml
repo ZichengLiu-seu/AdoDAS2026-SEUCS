@@ -1,6 +1,6 @@
-feature_root: /media/k3nwong/Data1/test/outputs/pipeline/anonymized
-manifest_dir: /media/k3nwong/Data1/test/outputs/data
-output_dir: /media/k3nwong/Data1/test/adodas_baseline/output/a1
+feature_root: /seu_share/home/dingding/220242349/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/pipeline/anonymized
+manifest_dir: /seu_share/home/dingding/220242349/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/data
+output_dir: /seu_share/home/dingding/220242349/adodas/AdoDAS2026-SEUCS/output  #  /media/k3nwong/Data1/test/adodas_baseline/output/a1
 
 feature_selection:
   audio_features:

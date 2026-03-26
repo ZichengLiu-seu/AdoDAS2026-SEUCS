@@ -48,8 +48,8 @@ class _RealtimeFileHandler(logging.FileHandler):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--task", type=str, required=True, choices=["a1", "a2"])
-    p.add_argument("--config", type=str, default="configs/default.yaml")
+    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2"])
+    p.add_argument("--config", type=str, default="tasks/a1/default.yaml")
 
     p.add_argument("--feature_root", type=str, default=None)
     p.add_argument("--manifest_dir", type=str, default=None)
@@ -833,20 +833,7 @@ def main() -> None:
     audio_pooled_group_dims = {n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims}
     video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
 
-    # bb_cfg = BackboneConfig(
-    #     audio_group_dims=audio_group_dims,
-    #     audio_pooled_group_dims=audio_pooled_group_dims,
-    #     video_group_dims=video_group_dims,
-    #     d_adapter=cfg.get("d_adapter", 64),
-    #     d_model=cfg.get("d_model", 256),
-    #     tcn_layers=cfg.get("tcn_layers", 6),
-    #     tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
-    #     asp_alpha=cfg.get("asp_alpha", 0.5),
-    #     asp_beta=cfg.get("asp_beta", 0.5),
-    #     dropout=cfg.get("dropout", 0.2),
-    #     d_shared=cfg.get("d_shared", 256),
-    # )
-    bb_cfg = DualTCNBackboneConfig(
+    bb_cfg = BackboneConfig(
         audio_group_dims=audio_group_dims,
         audio_pooled_group_dims=audio_pooled_group_dims,
         video_group_dims=video_group_dims,
@@ -854,15 +841,28 @@ def main() -> None:
         d_model=cfg.get("d_model", 256),
         tcn_layers=cfg.get("tcn_layers", 6),
         tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
-        n_heads=cfg.get("n_heads", 4),
         asp_alpha=cfg.get("asp_alpha", 0.5),
         asp_beta=cfg.get("asp_beta", 0.5),
         dropout=cfg.get("dropout", 0.2),
         d_shared=cfg.get("d_shared", 256),
     )
+    # bb_cfg = DualTCNBackboneConfig(
+    #     audio_group_dims=audio_group_dims,
+    #     audio_pooled_group_dims=audio_pooled_group_dims,
+    #     video_group_dims=video_group_dims,
+    #     d_adapter=cfg.get("d_adapter", 64),
+    #     d_model=cfg.get("d_model", 256),
+    #     tcn_layers=cfg.get("tcn_layers", 6),
+    #     tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+    #     n_heads=cfg.get("n_heads", 4),
+    #     asp_alpha=cfg.get("asp_alpha", 0.5),
+    #     asp_beta=cfg.get("asp_beta", 0.5),
+    #     dropout=cfg.get("dropout", 0.2),
+    #     d_shared=cfg.get("d_shared", 256),
+    # )
 
-    # backbone = MTCNBackbone(bb_cfg)
-    backbone = DualTCNBackbone(bb_cfg)
+    backbone = MTCNBackbone(bb_cfg)
+    # backbone = DualTCNBackbone(bb_cfg)
     grouped_model = GroupedModel(
         backbone=backbone,
         d_shared=bb_cfg.d_shared,
