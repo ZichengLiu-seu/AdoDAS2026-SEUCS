@@ -37,7 +37,7 @@ batch_size: 64
 lr: 0.001
 weight_decay: 0.01
 warmup_epochs: 1
-epochs: 30
+epochs: 1
 seed: 42
 num_workers: 8
 amp: true
