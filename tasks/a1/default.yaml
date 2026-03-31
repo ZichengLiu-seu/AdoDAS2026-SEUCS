@@ -1,6 +1,6 @@
-feature_root: /seu_share/home/dingding/220242349/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/pipeline/anonymized
-manifest_dir: /seu_share/home/dingding/220242349/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/data
-output_dir: /seu_share/home/dingding/220242349/adodas/AdoDAS2026-SEUCS/output  #  /media/k3nwong/Data1/test/adodas_baseline/output/a1
+feature_root: /home/data1/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/pipeline/anonymized
+manifest_dir: /home/data1/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/data
+output_dir: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs  #  /media/k3nwong/Data1/test/adodas_baseline/output/a1
 
 feature_selection:
   audio_features:
@@ -37,7 +37,7 @@ batch_size: 64
 lr: 0.001
 weight_decay: 0.01
 warmup_epochs: 1
-epochs: 1
+epochs: 10
 seed: 42
 num_workers: 8
 amp: true

@@ -39,6 +39,8 @@ class GroupedParticipantDataset(Dataset):
 
         self.participants: list[dict[str, Any]] = []
         for (school, cls, pid), group in grouped:
+            # if school != "SCH_001":
+            #     continue
             sess_rows = {}
             for _, row in group.iterrows():
                 sess = str(row["session"])
@@ -105,6 +107,7 @@ class GroupedParticipantDataset(Dataset):
                 )
                 groups[feat_name] = seq
             except FileNotFoundError:
+                # print(f"DEBUG: file not found")
                 pass
         return groups
 
@@ -236,6 +239,7 @@ class GroupedParticipantDataset(Dataset):
 
         if self.split == "train" and self.session_drop_prob > 0.0:
             return self._apply_session_dropout(sample)
+        # print(sample)
         return sample
 
     def _load_participant(self, idx: int) -> dict[str, Any]:
@@ -246,6 +250,7 @@ class GroupedParticipantDataset(Dataset):
         for sess_name in SESSIONS:
             if sess_name in info["sess_rows"]:
                 data = self._load_single_session(info["sess_rows"][sess_name])
+                # print(f"Debug: data valid: {data is not None}")
                 if data is not None:
                     sessions_data.append(data)
                     session_valid.append(True)

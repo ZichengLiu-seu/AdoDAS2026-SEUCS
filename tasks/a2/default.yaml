@@ -1,6 +1,6 @@
-feature_root: /media/k3nwong/Data1/test/outputs/pipeline/anonymized
-manifest_dir: /media/k3nwong/Data1/test/outputs/data
-output_dir: /media/k3nwong/Data1/test/adodas_baseline/output/a2
+feature_root: /home/data1/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/pipeline/anonymized
+manifest_dir: /home/data1/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/data
+output_dir: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs  #  /media/k3nwong/Data1/test/adodas_baseline/output/a1
 
 feature_selection:
   audio_features:

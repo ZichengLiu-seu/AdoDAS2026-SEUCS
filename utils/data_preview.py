@@ -1,6 +1,6 @@
 import numpy as np
 
-data = np.load('../dataset/val/SCH_001/CLS_0024/P005497/video/qc_stats/A01/sequence.npz')
+data = np.load('/home/data1/AdodasDataset/train/SCH_006/CLS_0002/P000029/audio/mel_mfcc/A01/sequence.npz')
 
 print("文件中的键名:", data.files)
 for key in data.files:

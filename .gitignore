@@ -207,6 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 /.idea/
+/.vscode/
 /checkpoints/
 /dataset/
 /outputs/
