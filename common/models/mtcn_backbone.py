@@ -222,7 +222,7 @@ class MTCNBackbone(nn.Module):
 
         a = self.audio_tcn(a, mask_a)
         v = self.video_tcn(v, mask_v)
-
+        # print(f"DEBUG: a size : {a.shape}")
         vad = batch["vad_signal"]
         qc = batch["qc_quality"]
         z_a = self.audio_asp(a, mask_a, vad, qc)

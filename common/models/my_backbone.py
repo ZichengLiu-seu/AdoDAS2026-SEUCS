@@ -145,6 +145,7 @@ class DualTCNBackbone(nn.Module):
         # a = self.audio_tcn(a, mask_a)
         # v = self.video_tcn(v, mask_v)
         a, v = self.dual_tcn(a, v, mask_a, mask_v)
+        # print(f"DEBUG: a size : {a.shape}")
 
         vad = batch["vad_signal"]
         qc = batch["qc_quality"]

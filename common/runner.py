@@ -454,8 +454,13 @@ def validate_grouped(
             targets = batch["participant_y_a2"].to(device).long()
 
         with torch.amp.autocast("cuda", enabled=use_amp, dtype=torch.bfloat16):
+            # log.info(f"DEBUG: flat_batch {flat_batch}")
+            # log.info(f"DEBUG: session_valid {session_valid}")
             out = grouped_model(flat_batch, B, session_valid)
+            var = out["participant_repr"]
+            # log.info(f"DEBUG: participant_repr: {var}")
             p_logits = task_head(out["participant_repr"])
+            # print(f"DEBUG: p_logits: {p_logits}")
             if task == "a1":
                 loss = a1_loss(p_logits, targets, pos_weight=pos_weight)
             else:
@@ -465,7 +470,9 @@ def validate_grouped(
 
         if task == "a1":
             logits_np = p_logits.float().cpu().numpy()
+            # print(f"DEBUG: logits_np: {logits_np}")
             probs = torch.sigmoid(p_logits.float()).cpu().numpy()
+            # print(f"DEBUG: probs: {probs}")
             all_preds.append(probs)
             all_labels.append(targets.cpu().numpy())
             all_logits.append(logits_np)
@@ -484,7 +491,7 @@ def validate_grouped(
         n_batches += 1
 
     avg_loss = total_loss / max(n_batches, 1)
-
+    # print(f"DEBUG: all_preds: {all_preds}")
     if task == "a1":
         probs_np = np.concatenate(all_preds)
         labels_np = np.concatenate(all_labels)

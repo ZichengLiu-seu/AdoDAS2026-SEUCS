@@ -21,7 +21,7 @@ feature_selection:
 
 mask_policy: and_core
 core_audio: [mel_mfcc, ssl_embed]
-core_video: [vision_ssl_embed, qc_stats]
+core_video: [vision_ssl_embed]  # [vision_ssl_embed, qc_stats]
 
 d_adapter: 64
 d_model: 256
@@ -32,12 +32,13 @@ asp_beta: 0.5
 dropout: 0.2
 d_shared: 256
 
+temporal_conv: default
 aggregator: mlp
-batch_size: 64
+batch_size: 32
 lr: 0.001
 weight_decay: 0.01
-warmup_epochs: 1
-epochs: 10
+warmup_epochs: 5
+epochs: 50
 seed: 42
 num_workers: 8
 amp: true

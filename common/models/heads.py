@@ -90,4 +90,5 @@ def a2_ordinal_loss(
     targets = A2OrdinalHead.build_ordinal_targets(labels, n_thresholds=logits.size(-1))
     if label_smoothing > 0.0:
         targets = targets * (1.0 - label_smoothing) + 0.5 * label_smoothing
+    # logits = torch.clamp(logits, -1e2, 1e2)
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
