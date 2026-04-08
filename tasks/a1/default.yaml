@@ -19,9 +19,10 @@ feature_selection:
   audio_ssl_model_tag: wav2vec2-chinese-xlsr
   video_ssl_model_tag: dinov2-large
 
+device: cuda:0
 mask_policy: and_core
 core_audio: [mel_mfcc, ssl_embed]
-core_video: [vision_ssl_embed]  # [vision_ssl_embed, qc_stats]
+core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 64
 d_model: 256
@@ -34,7 +35,7 @@ d_shared: 256
 
 temporal_conv: default
 aggregator: mlp
-batch_size: 32
+batch_size: 64
 lr: 0.001
 weight_decay: 0.01
 warmup_epochs: 5
