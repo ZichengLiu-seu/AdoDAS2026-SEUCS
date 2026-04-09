@@ -6,18 +6,18 @@ feature_selection:
   audio_features:
     - mel_mfcc
     - vad
-    # - egemaps
+    - egemaps
     - ssl_embed
   video_features:
     - headpose_geom
     - face_behavior
     - qc_stats
-    # - vad_agg
+    - vad_agg
     # - body_pose
     # - global_motion
-    # - vision_ssl_embed
-  audio_ssl_model_tag: chinese-hubert-base
-  video_ssl_model_tag: dinov2-base
+    - vision_ssl_embed
+  audio_ssl_model_tag: wav2vec2-chinese-xlsr
+  video_ssl_model_tag: dinov2-large
 
 device: cuda:1
 mask_policy: and_core
@@ -26,7 +26,7 @@ core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 64
 d_model: 256
-tcn_layers: 2
+tcn_layers: 1
 tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
@@ -36,9 +36,10 @@ d_shared: 256
 
 temporal_conv: DualTCN
 aggregator: mlp
-batch_size: 64
+batch_size: 32
 lr: 0.001
 weight_decay: 0.01
+multistep: true
 warmup_epochs: 5
 epochs: 50
 seed: 42

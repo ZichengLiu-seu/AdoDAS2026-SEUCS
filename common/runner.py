@@ -196,7 +196,16 @@ def _fmt_duration(seconds: float) -> str:
     return f"{m}m {s:02d}s"
 
 
-def _build_scheduler(optimizer, warmup_epochs, total_epochs):
+def _build_scheduler(optimizer, warmup_epochs, total_epochs, multistep):
+    if multistep and warmup_epochs > 0:
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
+        )
+        multistep = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[int(0.1*total_epochs), int(0.5*total_epochs), total_epochs], gamma=0.9)
+        return torch.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup, multistep], milestones=[warmup_epochs]
+        )
+
     if warmup_epochs > 0:
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
@@ -923,8 +932,12 @@ def main() -> None:
     )
     epochs = cfg.get("epochs", 20)
     warmup_epochs = cfg.get("warmup_epochs", 3)
-    scheduler = _build_scheduler(optimizer, warmup_epochs, epochs)
-    log.info(f"Scheduler: warmup={warmup_epochs} -> cosine, total={epochs}")
+    multistep = cfg.get("multistep", False)
+    scheduler = _build_scheduler(optimizer, warmup_epochs, epochs, multistep)
+    if multistep:
+        log.info(f"Scheduler: warmup={warmup_epochs} -> multistep at epochs, total={epochs}")
+    else:
+        log.info(f"Scheduler: warmup={warmup_epochs} -> cosine, total={epochs}")
     log.info(f"Grad clip: {grad_clip}")
 
     session_loss_weight = cfg.get("session_loss_weight", 0.5)

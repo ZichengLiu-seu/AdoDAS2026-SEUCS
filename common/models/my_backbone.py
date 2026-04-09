@@ -38,28 +38,37 @@ class DualTCN(nn.Module):
     ) -> None:
         super().__init__()
         self.a2v_attn = nn.MultiheadAttention(d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
-        self.v2a_attn = nn.MultiheadAttention(d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.v2a_attn = nn.MultiheadAttention(d_model, num_heads=num_heads, dropout=dropout, batch_first=True)        
+        self.a2v_lstm = nn.LSTM(d_model, d_model, num_layers=3, batch_first=True, dropout=dropout)
+        self.v2a_lstm = nn.LSTM(d_model, d_model, num_layers=3, batch_first=True, dropout=dropout)
 
-        self.audio_norm = nn.LayerNorm(d_model)
-        self.video_norm = nn.LayerNorm(d_model)
+        # self.audio_norm = nn.LayerNorm(d_model)
+        # self.video_norm = nn.LayerNorm(d_model)
 
-        self.audio_tcn = TCN(d_model, tcn_layers, tcn_kernel_size, dropout)
-        self.video_tcn = TCN(d_model, tcn_layers, tcn_kernel_size, dropout)
+        # self.audio_tcn = TCN(d_model, tcn_layers, tcn_kernel_size, dropout)
+        # self.video_tcn = TCN(d_model, tcn_layers, tcn_kernel_size, dropout)
 
     def forward(self, audio: torch.Tensor, video: torch.Tensor,
                 audio_mask: torch.Tensor, video_mask: torch.Tensor):
-        enhanced_audio, _ = self.a2v_attn(audio, video, video, key_padding_mask=video_mask)
-        enhanced_video, _ = self.v2a_attn(video, audio, audio, key_padding_mask=audio_mask)
-        enhanced_audio = self.audio_norm(enhanced_audio + audio)
-        enhanced_video = self.video_norm(enhanced_video + video)
-        out_audio = self.audio_tcn(enhanced_audio, audio_mask)
-        out_video = self.video_tcn(enhanced_video, video_mask)
+        # print(f"DEBUG: audio size : {audio.shape}, video size : {video.shape}")
+        # enhanced_audio, _ = self.a2v_attn(audio, video, video, key_padding_mask=video_mask)
+        # enhanced_video, _ = self.v2a_attn(video, audio, audio, key_padding_mask=audio_mask)
+        # print(f"DEBUG: attn enhanced_audio size : {enhanced_audio.shape}, attn enhanced_video size : {enhanced_video.shape}")
+        out_audio, _ = self.a2v_lstm(audio)
+        out_video, _ = self.v2a_lstm(video)
+        # print(f"DEBUG: lstm enhanced_audio size : {enhanced_audio.shape}, lstm enhanced_video size : {enhanced_video.shape}")
+
+        # enhanced_audio = self.audio_norm(enhanced_audio)
+        # enhanced_video = self.video_norm(enhanced_video)
+        # out_audio = self.audio_tcn(enhanced_audio, audio_mask)
+        # out_video = self.video_tcn(enhanced_video, video_mask)
+
         return out_audio, out_video
 
 
 class DualTCNBackbone(nn.Module):
     """
-    使用Transformer替换原有的TCN结果，实现早期融合策略
+    使用Transformer替换原有的独立TCN，实现早期融合策略
     """
     def __init__(self, cfg: DualTCNBackboneConfig) -> None:
         super().__init__()

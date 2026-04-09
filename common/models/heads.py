@@ -78,6 +78,7 @@ def a1_loss(
 ) -> torch.Tensor:
     if label_smoothing > 0.0:
         targets = targets.float() * (1.0 - label_smoothing) + 0.5 * label_smoothing
+    # logits = torch.clamp(logits, -1e2, 1e2)
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
 
