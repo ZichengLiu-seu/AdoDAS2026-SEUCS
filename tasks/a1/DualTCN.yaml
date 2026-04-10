@@ -31,7 +31,7 @@ tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
 asp_beta: 0.5
-dropout: 0.2
+dropout: 0.1
 d_shared: 256
 
 temporal_conv: DualTCN
@@ -40,8 +40,8 @@ batch_size: 32
 lr: 0.001
 weight_decay: 0.01
 multistep: true
-warmup_epochs: 3
-epochs: 30
+warmup_epochs: 1
+epochs: 10
 seed: 42
 num_workers: 8
 amp: true

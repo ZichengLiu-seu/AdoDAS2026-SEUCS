@@ -73,20 +73,50 @@ class InterModalityAttention(nn.Module):
         self.proj = nn.Linear(d_in, d_out)
 
     def forward(self, feature_list) -> torch.Tensor:
-        # print(f"DEBUG: feature_list length : {len(feature_list)}, each feature size : {[f.shape for f in feature_list]}")
         x = torch.stack(feature_list, dim=2)
-        # print(f"DEBUG: stacked feature size : {x.shape}")
         bt, t, n, d = x.shape
         x = x.view(bt * t, n, d) 
         attn_out, _ = self.attn(x, x, x)
-        # print(f"DEBUG: attn output size : {attn_out.shape}")
         fused = attn_out.mean(dim=1)
         fused = fused.view(bt, t, -1)
-        # print(f"DEBUG: fused feature size : {fused.shape}")
         out = self.proj(fused)
-        # print(f"DEBUG: projected feature size : {out.shape}")
         return out
 
+
+class newASP(nn.Module):
+    """Attentive Statistics Pooling with VAD and quality control signals."""
+    def __init__(self, d_model: int, alpha: float = 0.5, beta: float = 0.5) -> None:
+        super().__init__()
+        self.attn = nn.Linear(d_model, 1)
+        self.lstm = nn.LSTM(d_model, d_model, num_layers=2, batch_first=True, dropout=0.2)  # , bidirectional=True)
+        self.alpha = nn.Parameter(torch.tensor(alpha))
+        self.beta = nn.Parameter(torch.tensor(beta))
+        
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor,
+        vad: torch.Tensor,
+        qc: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        x    : (B, T, D)
+        mask : (B, T) bool
+        vad  : (B, T) float
+        qc   : (B, T) float
+        Returns: (B, 2*D)
+        """
+        e = self.attn(x).squeeze(-1) 
+        e = e + self.alpha * vad + self.beta * qc
+
+        # mask invalid positions
+        e = e.masked_fill(~mask, float("-inf"))
+        w = F.softmax(e, dim=-1)
+        w = w.masked_fill(~mask, 0.0)   # to avoid NaN in mean/std when all masked
+        w_unsq = w.unsqueeze(-1)
+        x *= w_unsq
+        # lstm_out, _ = self.lstm(x)
+        return torch.mean(x, dim=1)
 
 class DualTCNBackbone(nn.Module):
     """
@@ -133,8 +163,10 @@ class DualTCNBackbone(nn.Module):
 
         self.audio_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
         self.video_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
+        self.audio_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
+        self.video_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
 
-        fusion_in = 2 * cfg.d_model * 2
+        fusion_in = 2 * cfg.d_model
         fusion_in += len(self.audio_pooled_group_names) * cfg.d_adapter
         fusion_in += cfg.d_session
 
@@ -169,11 +201,11 @@ class DualTCNBackbone(nn.Module):
         ]
 
         # TODO：在这里加更早期的attention，保证对于有语义的channel建模 --> ASP背景下弱于baseline
-        # a = self.inter_audio_attn(audio_adapted)
-        # v = self.inter_video_attn(video_adapted)
+        a = self.inter_audio_attn(audio_adapted)
+        v = self.inter_video_attn(video_adapted)
         # print(f"DEBUG: inter modality attention output size : a {a.shape}, v {v.shape}")  # B, T, 64
-        a = self.audio_fusion(audio_adapted)
-        v = self.video_fusion(video_adapted)
+        # a = self.audio_fusion(audio_adapted)
+        # v = self.video_fusion(video_adapted)
         # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # B, T, 256
 
         mask_a = batch["mask_audio"]
@@ -182,17 +214,20 @@ class DualTCNBackbone(nn.Module):
         v = v * mask_v.unsqueeze(-1).float()
 
         # TODO：attention作为分支，不替代，做添加
-        a = self.audio_tcn(a, mask_a)
-        v = self.video_tcn(v, mask_v)
-        # a = self.shared_tcn(a, mask_a)
-        # v = self.shared_tcn(v, mask_v)
+        # a = self.audio_tcn(a, mask_a)
+        # v = self.video_tcn(v, mask_v)
+        a = self.shared_tcn(a, mask_a)
+        v = self.shared_tcn(v, mask_v)
         # a, v = self.dual_tcn(a, v, mask_a, mask_v)
-        # print(f"DEBUG: a size : {a.shape}")
+        # print(f"DEBUG: a size : {a.shape} , v size : {v.shape}")  # B, T, 256
 
         vad = batch["vad_signal"]
         qc = batch["qc_quality"]
-        z_a = self.audio_asp(a, mask_a, vad, qc)
-        z_v = self.video_asp(v, mask_v, vad, qc)
+        # z_a = self.audio_asp(a, mask_a, vad, qc)
+        # z_v = self.video_asp(v, mask_v, vad, qc)
+        # print(f"DEBUG: ASP output size : z_a {z_a.shape}, z_v {z_v.shape}")  # B, 512
+        z_a = self.audio_newasp(a, mask_a, vad, qc)
+        z_v = self.video_newasp(v, mask_v, vad, qc)
 
         parts = [z_a, z_v]
         parts.extend(
