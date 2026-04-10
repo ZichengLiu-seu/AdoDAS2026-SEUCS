@@ -31,7 +31,11 @@ def macro_auroc(probs: np.ndarray, labels: np.ndarray) -> float:
         if len(unique) < 2:
             scores.append(0.0)
         else:
-            scores.append(float(roc_auc_score(labels[:, c], probs[:, c])))
+            try:
+                scores.append(float(roc_auc_score(labels[:, c], probs[:, c])))
+            except Exception as e:
+                # print(f"DEBUG: Failed when calculating macro_auroc, label = {labels[:, c]}, probs = {probs[:, c]}")
+                return 0
     return float(np.mean(scores))
 
 

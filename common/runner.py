@@ -23,7 +23,7 @@ import yaml
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.mtcn_backbone import BackboneConfig, MTCNBackbone
-from .models.my_backbone import MybackboneConfig, MyBackbone
+from .models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone
 from .models.heads import A1Head, A2OrdinalHead, a1_loss, a2_ordinal_loss
 from .models.grouped_model import GroupedModel, CORALHead
 from .utils.seed import seed_everything
@@ -48,8 +48,8 @@ class _RealtimeFileHandler(logging.FileHandler):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--task", type=str, required=True, choices=["a1", "a2"])
-    p.add_argument("--config", type=str, default="configs/default.yaml")
+    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2"])
+    p.add_argument("--config", type=str, default="tasks/a1/default.yaml")
 
     p.add_argument("--feature_root", type=str, default=None)
     p.add_argument("--manifest_dir", type=str, default=None)
@@ -99,6 +99,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--patience", type=int, default=None)
     p.add_argument("--grad_clip", type=float, default=None)
     p.add_argument("--run_inference_after_train", type=int, default=None)
+    p.add_argument("--device", type=str, default=None,
+                   help="Device to use, e.g. cpu, cuda, cuda:0, cuda:1")
 
     return p.parse_args()
 
@@ -194,7 +196,18 @@ def _fmt_duration(seconds: float) -> str:
     return f"{m}m {s:02d}s"
 
 
-def _build_scheduler(optimizer, warmup_epochs, total_epochs):
+def _build_scheduler(optimizer, warmup_epochs, total_epochs, multistep):
+    if multistep and warmup_epochs > 0:
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
+        )
+        multistep = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[int(0.1*total_epochs), int(0.5*total_epochs), total_epochs], gamma=0.9
+        )
+        return torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup, multistep], milestones=[warmup_epochs]
+        )
+
     if warmup_epochs > 0:
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
@@ -454,8 +467,13 @@ def validate_grouped(
             targets = batch["participant_y_a2"].to(device).long()
 
         with torch.amp.autocast("cuda", enabled=use_amp, dtype=torch.bfloat16):
+            # log.info(f"DEBUG: flat_batch {flat_batch}")
+            # log.info(f"DEBUG: session_valid {session_valid}")
             out = grouped_model(flat_batch, B, session_valid)
+            var = out["participant_repr"]
+            # log.info(f"DEBUG: participant_repr: {var}")
             p_logits = task_head(out["participant_repr"])
+            # print(f"DEBUG: p_logits: {p_logits}")
             if task == "a1":
                 loss = a1_loss(p_logits, targets, pos_weight=pos_weight)
             else:
@@ -465,7 +483,9 @@ def validate_grouped(
 
         if task == "a1":
             logits_np = p_logits.float().cpu().numpy()
+            # print(f"DEBUG: logits_np: {logits_np}")
             probs = torch.sigmoid(p_logits.float()).cpu().numpy()
+            # print(f"DEBUG: probs: {probs}")
             all_preds.append(probs)
             all_labels.append(targets.cpu().numpy())
             all_logits.append(logits_np)
@@ -484,7 +504,7 @@ def validate_grouped(
         n_batches += 1
 
     avg_loss = total_loss / max(n_batches, 1)
-
+    # print(f"DEBUG: all_preds: {all_preds}")
     if task == "a1":
         probs_np = np.concatenate(all_preds)
         labels_np = np.concatenate(all_labels)
@@ -763,7 +783,11 @@ def main() -> None:
     task = cfg["task"]
 
     seed_everything(cfg.get("seed", 42))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_str = cfg.get("device")
+    if device_str is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device_str)
 
     output_root = Path(cfg.get("output_dir", "/media/k3nwong/Data1/test/train/output"))
     manifest_dir = Path(cfg.get("manifest_dir", "/media/k3nwong/Data1/test/outputs/data"))
@@ -833,35 +857,40 @@ def main() -> None:
     audio_pooled_group_dims = {n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims}
     video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
 
-    # bb_cfg = BackboneConfig(
-    #     audio_group_dims=audio_group_dims,
-    #     audio_pooled_group_dims=audio_pooled_group_dims,
-    #     video_group_dims=video_group_dims,
-    #     d_adapter=cfg.get("d_adapter", 64),
-    #     d_model=cfg.get("d_model", 256),
-    #     tcn_layers=cfg.get("tcn_layers", 6),
-    #     tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
-    #     asp_alpha=cfg.get("asp_alpha", 0.5),
-    #     asp_beta=cfg.get("asp_beta", 0.5),
-    #     dropout=cfg.get("dropout", 0.2),
-    #     d_shared=cfg.get("d_shared", 256),
-    # )
-    bb_cfg = MybackboneConfig(
-        audio_group_dims=audio_group_dims,
-        audio_pooled_group_dims=audio_pooled_group_dims,
-        video_group_dims=video_group_dims,
-        d_adapter=cfg.get("d_adapter", 64),
-        d_model=cfg.get("d_model", 256),
-        tcn_layers=cfg.get("tcn_layers", 6),
-        tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
-        asp_alpha=cfg.get("asp_alpha", 0.5),
-        asp_beta=cfg.get("asp_beta", 0.5),
-        dropout=cfg.get("dropout", 0.2),
-        d_shared=cfg.get("d_shared", 256),
-    )
 
-    # backbone = MTCNBackbone(bb_cfg)
-    backbone = MyBackbone(bb_cfg)
+    temporal_conv = cfg.get("temporal_conv", "default")
+    if temporal_conv == "default":
+        bb_cfg = BackboneConfig(
+            audio_group_dims=audio_group_dims,
+            audio_pooled_group_dims=audio_pooled_group_dims,
+            video_group_dims=video_group_dims,
+            d_adapter=cfg.get("d_adapter", 64),
+            d_model=cfg.get("d_model", 256),
+            tcn_layers=cfg.get("tcn_layers", 6),
+            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+            asp_alpha=cfg.get("asp_alpha", 0.5),
+            asp_beta=cfg.get("asp_beta", 0.5),
+            dropout=cfg.get("dropout", 0.2),
+            d_shared=cfg.get("d_shared", 256),
+        )
+        backbone = MTCNBackbone(bb_cfg)
+    elif temporal_conv == "DualTCN":
+        bb_cfg = DualTCNBackboneConfig(
+            audio_group_dims=audio_group_dims,
+            audio_pooled_group_dims=audio_pooled_group_dims,
+            video_group_dims=video_group_dims,
+            d_adapter=cfg.get("d_adapter", 64),
+            d_model=cfg.get("d_model", 256),
+            tcn_layers=cfg.get("tcn_layers", 6),
+            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+            n_heads=cfg.get("n_heads", 4),
+            asp_alpha=cfg.get("asp_alpha", 0.5),
+            asp_beta=cfg.get("asp_beta", 0.5),
+            dropout=cfg.get("dropout", 0.2),
+            d_shared=cfg.get("d_shared", 256),
+        )
+        backbone = DualTCNBackbone(bb_cfg)
+        
     grouped_model = GroupedModel(
         backbone=backbone,
         d_shared=bb_cfg.d_shared,
@@ -905,8 +934,12 @@ def main() -> None:
     )
     epochs = cfg.get("epochs", 20)
     warmup_epochs = cfg.get("warmup_epochs", 3)
-    scheduler = _build_scheduler(optimizer, warmup_epochs, epochs)
-    log.info(f"Scheduler: warmup={warmup_epochs} -> cosine, total={epochs}")
+    multistep = cfg.get("multistep", False)
+    scheduler = _build_scheduler(optimizer, warmup_epochs, epochs, multistep)
+    if multistep:
+        log.info(f"Scheduler: warmup={warmup_epochs} -> multistep at epochs, total={epochs}")
+    else:
+        log.info(f"Scheduler: warmup={warmup_epochs} -> cosine, total={epochs}")
     log.info(f"Grad clip: {grad_clip}")
 
     session_loss_weight = cfg.get("session_loss_weight", 0.5)

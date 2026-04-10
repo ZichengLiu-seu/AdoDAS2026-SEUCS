@@ -33,11 +33,14 @@ def load_sequence(
         parts.append(model_tag)
     parts.append(session)
     seq_path = Path(*[str(p) for p in parts]) / "sequence.npz"
+    # print(f"DEBUG: seq_path {seq_path}")
 
     if not seq_path.exists():
+        print(f"DEBUG: seq_path not exist")
         raise FileNotFoundError(f"Missing sequence file: {seq_path}")
 
     data = np.load(str(seq_path), allow_pickle=True)
+    # print(f"DEBUG: data is {data}")
 
     if feature_set == "mel_mfcc":
         arrays = []

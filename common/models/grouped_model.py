@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .mtcn_backbone import MTCNBackbone, BackboneConfig
-from .my_backbone import MyBackbone, MybackboneConfig
+from .my_backbone import DualTCNBackbone, DualTCNBackboneConfig
 
 
 class ParticipantAggregator(nn.Module):
@@ -71,7 +71,7 @@ class GroupedModel(nn.Module):
 
     def __init__(
         self,
-        backbone: MTCNBackbone or MyBackbone,
+        backbone: MTCNBackbone | DualTCNBackbone,
         d_shared: int,
         aggregator_method: str = "mlp",
         dropout: float = 0.2,
