@@ -13,8 +13,8 @@ feature_selection:
     - face_behavior
     - qc_stats
     - vad_agg
-    # - body_pose
-    # - global_motion
+    - body_pose
+    - global_motion
     - vision_ssl_embed
   audio_ssl_model_tag: wav2vec2-chinese-xlsr
   video_ssl_model_tag: dinov2-large
@@ -26,7 +26,7 @@ core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 64
 d_model: 256
-tcn_layers: 1
+tcn_layers: 6
 tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
@@ -35,13 +35,13 @@ dropout: 0.2
 d_shared: 256
 
 temporal_conv: DualTCN
-aggregator: mlp
+aggregator: attention  # mlp
 batch_size: 32
 lr: 0.001
 weight_decay: 0.01
 multistep: true
-warmup_epochs: 5
-epochs: 50
+warmup_epochs: 3
+epochs: 30
 seed: 42
 num_workers: 8
 amp: true

@@ -201,8 +201,10 @@ def _build_scheduler(optimizer, warmup_epochs, total_epochs, multistep):
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
         )
-        multistep = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[int(0.1*total_epochs), int(0.5*total_epochs), total_epochs], gamma=0.9)
-        return torch.lr_scheduler.SequentialLR(
+        multistep = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer, milestones=[int(0.1*total_epochs), int(0.5*total_epochs), total_epochs], gamma=0.9
+        )
+        return torch.optim.lr_scheduler.SequentialLR(
             optimizer, schedulers=[warmup, multistep], milestones=[warmup_epochs]
         )
 

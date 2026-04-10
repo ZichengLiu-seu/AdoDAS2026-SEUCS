@@ -26,7 +26,7 @@ core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 64
 d_model: 256
-tcn_layers: 3
+tcn_layers: 6
 tcn_kernel_size: 3
 asp_alpha: 0.5
 asp_beta: 0.5

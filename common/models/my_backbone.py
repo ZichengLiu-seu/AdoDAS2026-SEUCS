@@ -66,6 +66,28 @@ class DualTCN(nn.Module):
         return out_audio, out_video
 
 
+class InterModalityAttention(nn.Module):
+    def __init__(self, d_in: int, d_out: int, num_heads: int, dropout: float) -> None:
+        super().__init__()
+        self.attn = nn.MultiheadAttention(d_in, num_heads=num_heads, dropout=dropout, batch_first=True)
+        self.proj = nn.Linear(d_in, d_out)
+
+    def forward(self, feature_list) -> torch.Tensor:
+        # print(f"DEBUG: feature_list length : {len(feature_list)}, each feature size : {[f.shape for f in feature_list]}")
+        x = torch.stack(feature_list, dim=2)
+        # print(f"DEBUG: stacked feature size : {x.shape}")
+        bt, t, n, d = x.shape
+        x = x.view(bt * t, n, d) 
+        attn_out, _ = self.attn(x, x, x)
+        # print(f"DEBUG: attn output size : {attn_out.shape}")
+        fused = attn_out.mean(dim=1)
+        fused = fused.view(bt, t, -1)
+        # print(f"DEBUG: fused feature size : {fused.shape}")
+        out = self.proj(fused)
+        # print(f"DEBUG: projected feature size : {out.shape}")
+        return out
+
+
 class DualTCNBackbone(nn.Module):
     """
     使用Transformer替换原有的独立TCN，实现早期融合策略
@@ -95,6 +117,8 @@ class DualTCNBackbone(nn.Module):
         self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
         self.video_group_names = sorted(cfg.video_group_dims.keys())
 
+        self.inter_audio_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
+        self.inter_video_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
         self.audio_fusion = ModalityFusion(
             len(self.audio_group_names), cfg.d_adapter, cfg.d_model
         )
@@ -102,8 +126,9 @@ class DualTCNBackbone(nn.Module):
             len(self.video_group_names), cfg.d_adapter, cfg.d_model
         )
 
-        # self.audio_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-        # self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        self.audio_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        self.shared_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
         self.dual_tcn = DualTCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.n_heads, dropout=cfg.dropout)
 
         self.audio_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
@@ -143,17 +168,25 @@ class DualTCNBackbone(nn.Module):
             for n in self.video_group_names
         ]
 
+        # TODO：在这里加更早期的attention，保证对于有语义的channel建模 --> ASP背景下弱于baseline
+        # a = self.inter_audio_attn(audio_adapted)
+        # v = self.inter_video_attn(video_adapted)
+        # print(f"DEBUG: inter modality attention output size : a {a.shape}, v {v.shape}")  # B, T, 64
         a = self.audio_fusion(audio_adapted)
         v = self.video_fusion(video_adapted)
+        # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # B, T, 256
 
         mask_a = batch["mask_audio"]
         mask_v = batch["mask_video"]
         a = a * mask_a.unsqueeze(-1).float()
         v = v * mask_v.unsqueeze(-1).float()
 
-        # a = self.audio_tcn(a, mask_a)
-        # v = self.video_tcn(v, mask_v)
-        a, v = self.dual_tcn(a, v, mask_a, mask_v)
+        # TODO：attention作为分支，不替代，做添加
+        a = self.audio_tcn(a, mask_a)
+        v = self.video_tcn(v, mask_v)
+        # a = self.shared_tcn(a, mask_a)
+        # v = self.shared_tcn(v, mask_v)
+        # a, v = self.dual_tcn(a, v, mask_a, mask_v)
         # print(f"DEBUG: a size : {a.shape}")
 
         vad = batch["vad_signal"]
