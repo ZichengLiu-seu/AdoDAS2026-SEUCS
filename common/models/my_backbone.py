@@ -193,15 +193,15 @@ class DualTCNBackbone(nn.Module):
         self.video_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
         self.audio_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
         self.video_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
-        self.audio_proj = nn.Linear(cfg.d_model * 2, cfg.d_shared)
-        self.video_proj = nn.Linear(cfg.d_model * 2, cfg.d_shared)
+        self.audio_proj = nn.Linear(cfg.d_model * 2, cfg.d_adapter)
+        self.video_proj = nn.Linear(cfg.d_model * 2, cfg.d_adapter)
 
         fusion_in = 2 * cfg.d_model * 2
         fusion_in += len(self.audio_pooled_group_names) * cfg.d_adapter
-        fusion_in += cfg.d_session
+        # fusion_in += cfg.d_session
 
         self.session_embed = nn.Embedding(cfg.n_sessions, cfg.d_session)
-        self.session_proj = nn.Linear(cfg.d_session, 512)
+        self.session_proj = nn.Linear(cfg.d_session, cfg.d_adapter)
 
         self.fusion_mlp = nn.Sequential(
             nn.Linear(fusion_in, cfg.d_shared),
@@ -209,7 +209,7 @@ class DualTCNBackbone(nn.Module):
             nn.Dropout(cfg.dropout),
             nn.Linear(cfg.d_shared, cfg.d_shared),
         )
-        self.late_fusion_transformer = LateFusionTransformer(d_in=512, d_out=cfg.d_adapter, nhead=cfg.n_heads, num_layers=2, dropout=cfg.dropout)
+        self.late_fusion_transformer = LateFusionTransformer(d_in=cfg.d_adapter, d_out=cfg.d_shared, nhead=cfg.n_heads, num_layers=2, dropout=cfg.dropout)
 
         self._init_weights()
 
@@ -238,7 +238,7 @@ class DualTCNBackbone(nn.Module):
         # print(f"DEBUG: inter modality attention output size : a {a.shape}, v {v.shape}")  # B, T, 64
         a = self.audio_fusion(audio_adapted)
         v = self.video_fusion(video_adapted)
-        # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # B, T, 256
+        # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # 256, T, 256
 
         mask_a = batch["mask_audio"]
         mask_v = batch["mask_video"]
@@ -261,27 +261,28 @@ class DualTCNBackbone(nn.Module):
         # z_a = self.audio_newasp(a, mask_a, vad, qc)
         # z_v = self.video_newasp(v, mask_v, vad, qc)
 
-        parts = [z_a, z_v]
-        parts.extend(
-            self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
-            for name in self.audio_pooled_group_names
-        )
-        parts.append(self.session_embed(batch["session_idx"]))
-
-        # z_a = self.audio_proj(z_a)
-        # z_v = self.video_proj(z_v)
         # parts = [z_a, z_v]
         # parts.extend(
         #     self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
         #     for name in self.audio_pooled_group_names
         # )
+        # parts.append(self.session_embed(batch["session_idx"]))
+
+        z_a = self.audio_proj(z_a)
+        z_v = self.video_proj(z_v)
+        parts = [z_a, z_v]
+        parts.extend(
+            self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
+            for name in self.audio_pooled_group_names
+        )
         # parts.append(self.session_proj(self.session_embed(batch["session_idx"])))
         # print(f"DEBUG: parts size : {[part.shape for part in parts]}")
-        # parts = torch.stack(parts, dim=1)
 
-        z = torch.cat(parts, dim=-1)
+        # z = torch.cat(parts, dim=-1)
         # print(f"DEBUG: concatenated feature size : {z.shape}")
-        return self.fusion_mlp(z)
-        # z = self.late_fusion_transformer(parts).mean(dim=1)
+        # return self.fusion_mlp(z)
+        parts = torch.stack(parts, dim=1)
+        # print(f"DEBUG: stacked parts size : {parts.shape}")
+        z = self.late_fusion_transformer(parts).mean(dim=1)
         # print(f"DEBUG: late fusion transformer output size : {z.shape}")
-        # return z
+        return z

@@ -102,7 +102,7 @@ class GroupedModel(nn.Module):
         session_type_logits = self.session_type_head(session_reprs) 
 
         return {
-            "session_reprs": session_reprs,
+            # "session_reprs": session_reprs,
             "participant_repr": participant_repr,
             "session_type_logits": session_type_logits,
         }

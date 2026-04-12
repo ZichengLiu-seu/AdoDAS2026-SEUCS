@@ -386,15 +386,15 @@ def train_one_epoch_grouped(
                 main_loss = a2_ordinal_loss(p_logits, targets, pos_weight=pos_weight, label_smoothing=label_smoothing)
 
             if has_valid_sessions:
-                s_logits = task_head(out["session_reprs"])[valid_session_mask]
-                if task == "a1":
-                    s_targets = targets.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 3)[valid_session_mask]
-                    sess_loss = a1_loss(s_logits, s_targets, pos_weight=pos_weight, label_smoothing=label_smoothing)
-                else:
-                    s_targets = targets.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 21)[valid_session_mask]
-                    sess_loss = a2_ordinal_loss(
-                        s_logits, s_targets, pos_weight=pos_weight, label_smoothing=label_smoothing
-                    )
+                # s_logits = task_head(out["session_reprs"])[valid_session_mask]
+                # if task == "a1":
+                #     s_targets = targets.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 3)[valid_session_mask]
+                #     sess_loss = a1_loss(s_logits, s_targets, pos_weight=pos_weight, label_smoothing=label_smoothing)
+                # else:
+                #     s_targets = targets.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 21)[valid_session_mask]
+                #     sess_loss = a2_ordinal_loss(
+                #         s_logits, s_targets, pos_weight=pos_weight, label_smoothing=label_smoothing
+                #     )
 
                 type_loss = F.cross_entropy(
                     out["session_type_logits"][valid_session_mask],
@@ -404,7 +404,8 @@ def train_one_epoch_grouped(
                 sess_loss = p_logits.new_zeros(())
                 type_loss = p_logits.new_zeros(())
 
-            loss = main_loss + session_loss_weight * sess_loss + session_type_loss_weight * type_loss
+            # loss = main_loss + session_loss_weight * sess_loss + session_type_loss_weight * type_loss
+            loss = main_loss + session_type_loss_weight * type_loss
 
         optimizer.zero_grad()
         if scaler is not None:
@@ -419,7 +420,7 @@ def train_one_epoch_grouped(
         else:
             loss.backward()
             nn.utils.clip_grad_norm_(
-                list(grouped_model.parameters()) + list(task_head.parameters()),
+                list(grouped_model.parameters()) + list(task_head.parameters()),    
                 max_norm=grad_clip,
             )
             optimizer.step()
@@ -479,7 +480,7 @@ def validate_grouped(
             else:
                 loss = a2_ordinal_loss(p_logits, targets, pos_weight=pos_weight)
 
-            s_logits = task_head(out["session_reprs"])
+            # s_logits = task_head(out["session_reprs"])
 
         if task == "a1":
             logits_np = p_logits.float().cpu().numpy()
@@ -490,8 +491,8 @@ def validate_grouped(
             all_labels.append(targets.cpu().numpy())
             all_logits.append(logits_np)
 
-            s_probs = torch.sigmoid(s_logits.float()).cpu().numpy()
-            all_sess_preds.append(s_probs)
+            # s_probs = torch.sigmoid(s_logits.float()).cpu().numpy()
+            # all_sess_preds.append(s_probs)
         else:
             if decode_method == "auto":
                 all_logits.append(p_logits.float().cpu())
@@ -533,14 +534,14 @@ def validate_grouped(
                 f"p_mean={p_mean:.3f} P={prec:.3f} R={rec:.3f} F1={pcf1[t]:.3f}"
             )
 
-        if all_sess_preds:
-            sess_probs = np.concatenate(all_sess_preds)
-            n_sess = sess_probs.shape[0]
-            if n_sess % 4 == 0:
-                n_part = n_sess // 4
-                sess_grid = sess_probs.reshape(n_part, 4, 3)
-                sess_var = np.mean(np.var(sess_grid, axis=1))
-                log.info(f"    Session-level variance (collapse metric): {sess_var:.6f}")
+        # if all_sess_preds:
+        #     sess_probs = np.concatenate(all_sess_preds)
+        #     n_sess = sess_probs.shape[0]
+        #     if n_sess % 4 == 0:
+        #         n_part = n_sess // 4
+        #         sess_grid = sess_probs.reshape(n_part, 4, 3)
+        #         sess_var = np.mean(np.var(sess_grid, axis=1))
+        #         log.info(f"    Session-level variance (collapse metric): {sess_var:.6f}")
 
         log.info(
             f"    calibrated F1={cal_mf1:.4f} via biases "
