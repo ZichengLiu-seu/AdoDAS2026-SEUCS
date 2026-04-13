@@ -178,6 +178,14 @@ class EarlyStopping:
         return self.counter >= self.patience
 
 
+class AdaptiveLossWeight(nn.Module):
+    def __init__(self, initial_weights: list[float], device: torch.device):
+        super().__init__()
+        self.weights = nn.Parameter(torch.log(torch.tensor(initial_weights, dtype=torch.float32).to(device)))
+
+    def forward(self):
+        return F.softmax(self.weights, dim=0) * 0.3
+
 def _to_device(obj, device):
     if isinstance(obj, torch.Tensor):
         return obj.to(device)
@@ -344,6 +352,7 @@ def train_one_epoch_grouped(
     best_metric: float = -1.0,
     label_smoothing: float = 0.0,
     feature_noise_std: float = 0.0,
+    adaptive_loss_weight: AdaptiveLossWeight | None = None,
 ) -> float:
     grouped_model.train()
     task_head.train()
@@ -404,7 +413,13 @@ def train_one_epoch_grouped(
                 sess_loss = p_logits.new_zeros(())
                 type_loss = p_logits.new_zeros(())
 
-            loss = main_loss + session_loss_weight * sess_loss + session_type_loss_weight * type_loss
+            # loss = main_loss + session_loss_weight * sess_loss + session_type_loss_weight * type_loss
+            # loss = main_loss + session_type_loss_weight * type_loss
+            if adaptive_loss_weight is not None:
+                weights = adaptive_loss_weight()
+                loss = main_loss + weights[0] * sess_loss + weights[1] * type_loss
+            else:
+                loss = main_loss + session_loss_weight * sess_loss + session_type_loss_weight * type_loss
 
         optimizer.zero_grad()
         if scaler is not None:
@@ -419,7 +434,7 @@ def train_one_epoch_grouped(
         else:
             loss.backward()
             nn.utils.clip_grad_norm_(
-                list(grouped_model.parameters()) + list(task_head.parameters()),
+                list(grouped_model.parameters()) + list(task_head.parameters()),    
                 max_norm=grad_clip,
             )
             optimizer.step()
@@ -928,7 +943,10 @@ def main() -> None:
             pos_weight_t = compute_a2_pos_weight(manifest_dir / "train.csv").to(device)
             log.info(f"A2 pos_weight shape: {pos_weight_t.shape}")
 
-    params = list(grouped_model.parameters()) + list(task_head.parameters())
+    session_loss_weight = cfg.get("session_loss_weight", 0.2)
+    session_type_loss_weight = cfg.get("session_type_loss_weight", 0.15)
+    adaptive_loss_weight = AdaptiveLossWeight(initial_weights=[session_loss_weight, session_type_loss_weight], device=device)
+    params = list(grouped_model.parameters()) + list(task_head.parameters()) + list(adaptive_loss_weight.parameters())
     optimizer = torch.optim.AdamW(
         params, lr=cfg.get("lr", 1e-3), weight_decay=cfg.get("weight_decay", 1e-2)
     )
@@ -983,6 +1001,7 @@ def main() -> None:
             best_metric=best_metric,
             label_smoothing=label_smoothing,
             feature_noise_std=feature_noise_std,
+            adaptive_loss_weight=adaptive_loss_weight,
         )
 
         val_metrics = validate_grouped(

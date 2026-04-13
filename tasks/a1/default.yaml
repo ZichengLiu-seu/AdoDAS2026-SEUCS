@@ -9,7 +9,7 @@ feature_selection:
     - egemaps
     - ssl_embed
   video_features:
-    # - headpose_geom
+    - headpose_geom
     - face_behavior
     - qc_stats
     - vad_agg
