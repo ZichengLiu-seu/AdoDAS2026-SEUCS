@@ -120,9 +120,9 @@ class newASP(nn.Module):
 
 
 class LSTM(nn.Module):
-    def __init__(self, d_model: int, d_hidden: int, n_layers: int, dropout: float) -> None:
+    def __init__(self, d_model: int, d_hidden: int, n_layers: int) -> None:
         super().__init__()
-        self.lstm = nn.LSTM(d_model, d_hidden, num_layers=n_layers, batch_first=True, dropout=dropout)
+        self.lstm = nn.LSTM(d_model, d_hidden, num_layers=n_layers, batch_first=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         lstm_out, _ = self.lstm(x)
@@ -197,8 +197,8 @@ class DualTCNBackbone(nn.Module):
         self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
         self.shared_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
         self.dual_tcn = DualTCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.n_heads, dropout=cfg.dropout)
-        self.audio_lstm = LSTM(cfg.d_model, cfg.d_model, n_layers=1, dropout=cfg.dropout)
-        self.video_lstm = LSTM(cfg.d_model, cfg.d_model, n_layers=1, dropout=cfg.dropout)
+        self.audio_lstm = LSTM(cfg.d_model, cfg.d_model, n_layers=1)
+        self.video_lstm = LSTM(cfg.d_model, cfg.d_model, n_layers=1)
 
         self.audio_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
         self.video_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
@@ -244,11 +244,11 @@ class DualTCNBackbone(nn.Module):
         ]
 
         # TODO：在这里加更早期的attention，保证对于有语义的channel建模 --> ASP背景下弱于baseline
-        # a = self.inter_audio_attn(audio_adapted)
-        # v = self.inter_video_attn(video_adapted)
+        a = self.inter_audio_attn(audio_adapted)
+        v = self.inter_video_attn(video_adapted)
         # print(f"DEBUG: inter modality attention output size : a {a.shape}, v {v.shape}")  # B, T, 64
-        a = self.audio_fusion(audio_adapted)
-        v = self.video_fusion(video_adapted)
+        # a = self.audio_fusion(audio_adapted)
+        # v = self.video_fusion(video_adapted)
         # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # 256, T, 256
 
         mask_a = batch["mask_audio"]
@@ -259,8 +259,8 @@ class DualTCNBackbone(nn.Module):
         # TODO：attention作为分支，不替代，做添加
         # a = self.audio_tcn(a, mask_a)
         # v = self.video_tcn(v, mask_v)
-        a = self.shared_tcn(a, mask_a)
-        v = self.shared_tcn(v, mask_v)
+        # a = self.shared_tcn(a, mask_a)
+        # v = self.shared_tcn(v, mask_v)
         # a, v = self.dual_tcn(a, v, mask_a, mask_v)
         # print(f"DEBUG: a size : {a.shape} , v size : {v.shape}")  # B, T, 256
         a = self.audio_lstm(a)

@@ -13,14 +13,13 @@ class A1Head(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(d_in, d_in // 2),
             nn.GELU(),
-            nn.Dropout(0.2),
-            nn.Linear(d_in // 2, 3)
+            nn.Linear(d_in // 2, 3),
         )
         if bias_init is not None:
             with torch.no_grad():
                 # self.fc.bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
                 # self.fc[0].bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
-                self.fc[3].bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
+                self.fc[-1].bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc(x)

@@ -7,12 +7,12 @@ feature_selection:
     - mel_mfcc
     - vad
     # - egemaps
-    - ssl_embed
+    # - ssl_embed
   video_features:
     # - headpose_geom
     # - face_behavior
     - qc_stats
-    - vad_agg
+    # - vad_agg
     # - body_pose
     # - global_motion
     - vision_ssl_embed
@@ -21,7 +21,7 @@ feature_selection:
 
 device: cuda:1
 mask_policy: and_core
-core_audio: [mel_mfcc, ssl_embed]
+core_audio: [mel_mfcc]  # , ssl_embed]
 core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 64
@@ -45,7 +45,7 @@ epochs: 20
 seed: 42
 num_workers: 8
 amp: true
-preload: false
+preload: true
 grad_clip: 1.0
 use_pos_weight: true
 patience: 6
