@@ -9,10 +9,18 @@ class A1Head(nn.Module):
 
     def __init__(self, d_in: int, bias_init: list[float] | None = None) -> None:
         super().__init__()
-        self.fc = nn.Linear(d_in, 3)
+        # self.fc = nn.Linear(d_in, 3)
+        self.fc = nn.Sequential(
+            nn.Linear(d_in, d_in // 2),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(d_in // 2, 3)
+        )
         if bias_init is not None:
             with torch.no_grad():
-                self.fc.bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
+                # self.fc.bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
+                # self.fc[0].bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
+                self.fc[3].bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc(x)
