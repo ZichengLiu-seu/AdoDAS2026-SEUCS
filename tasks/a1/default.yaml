@@ -38,7 +38,7 @@ aggregator: mlp
 batch_size: 64
 lr: 0.001
 weight_decay: 0.01
-warmup_epochs: 5
+warmup_epochs: 1
 epochs: 50
 seed: 42
 num_workers: 8

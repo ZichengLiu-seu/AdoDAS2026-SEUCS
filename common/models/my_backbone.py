@@ -88,7 +88,7 @@ class newASP(nn.Module):
     def __init__(self, d_model: int, alpha: float = 0.5, beta: float = 0.5) -> None:
         super().__init__()
         self.attn = nn.Linear(d_model, 1)
-        self.lstm = nn.LSTM(d_model, d_model, num_layers=2, batch_first=True, dropout=0.2)  # , bidirectional=True)
+        self.lstm = nn.LSTM(d_model, d_model, num_layers=1, batch_first=True)
         self.alpha = nn.Parameter(torch.tensor(alpha))
         self.beta = nn.Parameter(torch.tensor(beta))
         
@@ -114,9 +114,9 @@ class newASP(nn.Module):
         w = F.softmax(e, dim=-1)
         w = w.masked_fill(~mask, 0.0)   # to avoid NaN in mean/std when all masked
         w_unsq = w.unsqueeze(-1)
-        x *= w_unsq
+        masked_x = x * w_unsq
         # lstm_out, _ = self.lstm(x)
-        return torch.mean(x, dim=1)
+        return torch.mean(masked_x, dim=1)
 
 
 class LSTM(nn.Module):
@@ -184,8 +184,8 @@ class DualTCNBackbone(nn.Module):
         self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
         self.video_group_names = sorted(cfg.video_group_dims.keys())
 
-        self.inter_audio_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
-        self.inter_video_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
+        # self.inter_audio_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
+        # self.inter_video_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
         self.audio_fusion = ModalityFusion(
             len(self.audio_group_names), cfg.d_adapter, cfg.d_model
         )
@@ -193,17 +193,17 @@ class DualTCNBackbone(nn.Module):
             len(self.video_group_names), cfg.d_adapter, cfg.d_model
         )
 
-        self.audio_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-        self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-        self.shared_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-        self.dual_tcn = DualTCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.n_heads, dropout=cfg.dropout)
+        # self.audio_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        # self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        # self.shared_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        # self.dual_tcn = DualTCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.n_heads, dropout=cfg.dropout)
         self.audio_lstm = LSTM(cfg.d_model, cfg.d_model, n_layers=1)
         self.video_lstm = LSTM(cfg.d_model, cfg.d_model, n_layers=1)
 
         self.audio_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
         self.video_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
-        self.audio_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
-        self.video_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
+        # self.audio_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
+        # self.video_newasp = newASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
         self.audio_proj = nn.Linear(cfg.d_model * 2, cfg.d_adapter)
         self.video_proj = nn.Linear(cfg.d_model * 2, cfg.d_adapter)
 
@@ -212,7 +212,7 @@ class DualTCNBackbone(nn.Module):
         fusion_in += cfg.d_session
 
         self.session_embed = nn.Embedding(cfg.n_sessions, cfg.d_session)
-        self.session_proj = nn.Linear(cfg.d_session, cfg.d_adapter)
+        # self.session_proj = nn.Linear(cfg.d_session, cfg.d_adapter)
 
         self.fusion_mlp = nn.Sequential(
             nn.Linear(fusion_in, cfg.d_shared),
@@ -220,7 +220,7 @@ class DualTCNBackbone(nn.Module):
             nn.Dropout(cfg.dropout),
             nn.Linear(cfg.d_shared, cfg.d_shared),
         )
-        self.late_fusion_transformer = LateFusionTransformer(d_in=cfg.d_adapter, d_out=cfg.d_shared, nhead=cfg.n_heads, num_layers=2, dropout=cfg.dropout)
+        # self.late_fusion_transformer = LateFusionTransformer(d_in=cfg.d_adapter, d_out=cfg.d_shared, nhead=cfg.n_heads, num_layers=2, dropout=cfg.dropout)
 
         self._init_weights()
 
@@ -244,11 +244,11 @@ class DualTCNBackbone(nn.Module):
         ]
 
         # TODO：在这里加更早期的attention，保证对于有语义的channel建模 --> ASP背景下弱于baseline
-        a = self.inter_audio_attn(audio_adapted)
-        v = self.inter_video_attn(video_adapted)
+        # a = self.inter_audio_attn(audio_adapted)
+        # v = self.inter_video_attn(video_adapted)
         # print(f"DEBUG: inter modality attention output size : a {a.shape}, v {v.shape}")  # B, T, 64
-        # a = self.audio_fusion(audio_adapted)
-        # v = self.video_fusion(video_adapted)
+        a = self.audio_fusion(audio_adapted)
+        v = self.video_fusion(video_adapted)
         # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # 256, T, 256
 
         mask_a = batch["mask_audio"]
@@ -274,29 +274,30 @@ class DualTCNBackbone(nn.Module):
         # print(f"DEBUG: ASP output size : z_a {z_a.shape}, z_v {z_v.shape}")  # B, 512
         # z_a = self.audio_newasp(a, mask_a, vad, qc)
         # z_v = self.video_newasp(v, mask_v, vad, qc)
+        # print(f"DEBUG: newASP output size : z_a {z_a.shape}, z_v {z_v.shape}")
 
-        # parts = [z_a, z_v]
-        # parts.extend(
-        #     self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
-        #     for name in self.audio_pooled_group_names
-        # )
-        # parts.append(self.session_embed(batch["session_idx"]))        
-        # z = torch.cat(parts, dim=-1)
-        # # print(f"DEBUG: concatenated feature size : {z.shape}")
-        # return self.fusion_mlp(z)
-
-        z_a = self.audio_proj(z_a)
-        z_v = self.video_proj(z_v)
         parts = [z_a, z_v]
         parts.extend(
             self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
             for name in self.audio_pooled_group_names
         )
-        parts.append(self.session_proj(self.session_embed(batch["session_idx"])))
+        parts.append(self.session_embed(batch["session_idx"]))        
+        z = torch.cat(parts, dim=-1)
+        # print(f"DEBUG: concatenated feature size : {z.shape}")
+        return self.fusion_mlp(z)
+
+        # z_a = self.audio_proj(z_a)
+        # z_v = self.video_proj(z_v)
+        # parts = [z_a, z_v]
+        # parts.extend(
+        #     self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
+        #     for name in self.audio_pooled_group_names
+        # )
+        # parts.append(self.session_proj(self.session_embed(batch["session_idx"])))
         # print(f"DEBUG: parts size : {[part.shape for part in parts]}")
 
-        parts = torch.stack(parts, dim=1)
+        # parts = torch.stack(parts, dim=1)
         # print(f"DEBUG: stacked parts size : {parts.shape}")
-        z = self.late_fusion_transformer(parts).mean(dim=1)
+        # z = self.late_fusion_transformer(parts).mean(dim=1)
         # print(f"DEBUG: late fusion transformer output size : {z.shape}")
-        return z
+        # return z
