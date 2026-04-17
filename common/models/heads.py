@@ -100,3 +100,17 @@ def a2_ordinal_loss(
         targets = targets * (1.0 - label_smoothing) + 0.5 * label_smoothing
     # logits = torch.clamp(logits, -1e2, 1e2)
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
+
+
+def contrastive_loss(a_repr, v_repr, participant_ids, temperature: float = 0.5) -> torch.Tensor:
+    a_norm = F.normalize(a_repr, dim=-1)
+    v_norm = F.normalize(v_repr, dim=-1)
+
+    similarity_matrix = torch.matmul(a_norm, v_norm.T) / temperature
+
+    mask = torch.eq(participant_ids.unsqueeze(1), participant_ids.unsqueeze(0)).float()
+
+    logits = similarity_matrix - torch.logsumexp(similarity_matrix, dim=1, keepdim=True)
+    loss = -torch.sum(mask * logits) / mask.sum()
+
+    return loss

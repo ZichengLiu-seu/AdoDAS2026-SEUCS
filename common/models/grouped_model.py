@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .mtcn_backbone import MTCNBackbone, BackboneConfig
-from .my_backbone import DualTCNBackbone, DualTCNBackboneConfig
+from .my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
 
 
 class ParticipantAggregator(nn.Module):
@@ -154,3 +154,92 @@ class CORALHead(nn.Module):
         p3 = torch.min(s[..., 2], p2)
         E = p1 + p2 + p3
         return E.round().long().clamp(0, 3)
+
+
+class SelfSupervisedModel(nn.Module):
+
+    def __init__(
+        self,
+        backbone: TwinTowerBackbone,
+        d_shared: int,
+        aggregator_method: str = "mlp",
+        dropout: float = 0.2,
+    ):
+        super().__init__()
+        self.backbone = backbone        
+        self.aggregator = ParticipantAggregator(
+            d_in=d_shared, d_out=d_shared,
+            method=aggregator_method, dropout=dropout,
+        )
+        self.contrastive_proj = nn.Sequential(
+            nn.Linear(d_shared, d_shared),
+        )
+
+    def forward(
+        self,
+        flat_batch: dict,
+        n_participants: int,
+        session_valid: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+
+        session_reprs = self.backbone(flat_batch) 
+        a_low_repr, v_low_repr, a_high_repr, v_high_repr = session_reprs.unbind(dim=1)
+
+        B = n_participants
+        a_low_grid = a_low_repr.view(B, 4, -1)
+        v_low_grid = v_low_repr.view(B, 4, -1) 
+        a_high_grid = a_high_repr.view(B, 4, -1)
+        v_high_grid = v_high_repr.view(B, 4, -1)
+
+        a_low_part_repr = self.aggregator(a_low_grid, session_valid)
+        v_low_part_repr = self.aggregator(v_low_grid, session_valid)
+        a_high_part_repr = self.aggregator(a_high_grid, session_valid)
+        v_high_part_repr = self.aggregator(v_high_grid, session_valid)
+
+        contrastive_repr = self.contrastive_proj(participant_repr)
+
+        return {
+            "a_low_part_repr": a_low_part_repr,
+            "v_low_part_repr": v_low_part_repr,
+            "a_high_part_repr": a_high_part_repr,
+            "v_high_part_repr": v_high_part_repr,
+        }
+
+class PostTrainModel(nn.Module):
+
+    def __init__(
+        self,
+        backbone: TwinTowerBackbone,
+        d_shared: int,
+        aggregator_method: str = "mlp",
+        dropout: float = 0.2,
+    ):
+        super().__init__()
+        self.backbone = backbone        
+        self.aggregator = ParticipantAggregator(
+            d_in=d_shared, d_out=d_shared,
+            method=aggregator_method, dropout=dropout,
+        )
+        self.fusion = nn.Linear(d_shared, 1)
+
+    def forward(
+        self,
+        flat_batch: dict,
+        n_participants: int,
+        session_valid: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+
+        session_reprs = self.backbone(flat_batch) 
+
+        B = n_participants
+        session_grid = session_reprs.view(B, 4, -1)
+
+        participant_repr = session_grid.aggregator(session_grid, session_valid) 
+
+        task_logits = self.task_head(participant_repr).squeeze(-1)
+
+        return {
+            "session_reprs": session_reprs,
+            "participant_repr": participant_repr,
+            "task_logits": task_logits,
+        }

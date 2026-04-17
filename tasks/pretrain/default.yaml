@@ -34,7 +34,7 @@ asp_beta: 0.5
 dropout: 0.3
 d_shared: 128  # 256
 
-temporal_conv: DualTCN
+temporal_conv: TwinTower
 aggregator: mean
 batch_size: 64
 lr: 0.001

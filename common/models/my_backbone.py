@@ -128,6 +128,7 @@ class LSTM(nn.Module):
         lstm_out, _ = self.lstm(x)
         return lstm_out
 
+
 class LateFusionTransformer(nn.Module):
     def __init__(self, d_in=256, d_out=64, nhead=4, num_layers=2, dropout=0.1):
         super().__init__()
@@ -301,3 +302,76 @@ class DualTCNBackbone(nn.Module):
         # z = self.late_fusion_transformer(parts).mean(dim=1)
         # print(f"DEBUG: late fusion transformer output size : {z.shape}")
         # return z
+
+# ========================================TwinTower-Related Modules========================================
+class GatedFusion(nn.Module):
+    def __init__(self, d_in: int, d_out: int) -> None:
+        super().__init__()
+
+    def forward(self, x: list) -> torch.Tensor:
+        fused = 0
+        for i in range(len(x)):
+            fused += torch.sigmoid(x[i]) * x[i]
+        return fused
+
+class TwinTowerBackbone(nn.Module):
+    """
+    split low-dimension features and high-dimension features, and use different adapters group for feature fusion, then late fusion with a simple MLP OR using contrasive learning to align the two modality representations
+    """
+    def __init__(self, cfg: DualTCNBackboneConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.audio_adapters = nn.ModuleDict({
+            name: GroupAdapter(d_in, cfg.d_adapter, cfg.dropout)
+            for name, d_in in cfg.audio_group_dims.items() if name != "ssl_embed"
+        })
+        self.audio_pooled_adapters = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.LayerNorm(d_in),
+                nn.Linear(d_in, cfg.d_adapter),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+            )
+            for name, d_in in cfg.audio_pooled_group_dims.items()
+        })
+        self.video_adapters = nn.ModuleDict({
+            name: GroupAdapter(d_in, cfg.d_adapter, cfg.dropout)
+            for name, d_in in cfg.video_group_dims.items() if name != "vision_ssl_embed"
+        })
+        self.audio_group_names = sorted(cfg.audio_group_dims.keys())
+        self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
+        self.video_group_names = sorted(cfg.video_group_dims.keys())
+
+        self.audio_gated_fusion = GatedFusion(cfg.d_adapter)
+        self.video_gated_fusion = GatedFusion(cfg.d_adapter)
+
+
+        self.audio_ssl_proj = nn.Linear(cfg.audio_group_dims["ssl_embed"], 64)
+        self.video_ssl_proj = nn.Linear(cfg.video_group_dims["vision_ssl_embed"], 64)
+
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        audio_adapted = [
+            self.audio_adapters[n](batch["audio_groups"][n])
+            for n in self.audio_group_names if n != "ssl_embed"
+        ]
+        video_adapted = [
+            self.video_adapters[n](batch["video_groups"][n])
+            for n in self.video_group_names if n != "vision_ssl_embed"
+        ]
+
+        a_low_repr = self.audio_gated_fusion(audio_adapted)
+        v_low_repr = self.video_gated_fusion(video_adapted)
+
+        a_high_repr = self.audio_ssl_proj(batch["audio_groups"]["ssl_embed"])
+        v_high_repr = self.video_ssl_proj(batch["video_groups"]["vision_ssl_embed"])
+
+        # mask_a = batch["mask_audio"]
+        # mask_v = batch["mask_video"]
+        # a = a * mask_a.unsqueeze(-1).float()
+        # v = v * mask_v.unsqueeze(-1).float()
+
+        stacked_repr = torch.stack([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=1)
+
+        return stacked_repr
+

@@ -48,7 +48,7 @@ class _RealtimeFileHandler(logging.FileHandler):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2"])
+    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2", "ssl_pretrain"])
     p.add_argument("--config", type=str, default="tasks/a1/default.yaml")
 
     p.add_argument("--feature_root", type=str, default=None)
@@ -889,7 +889,7 @@ def main() -> None:
             d_shared=cfg.get("d_shared", 256),
         )
         backbone = MTCNBackbone(bb_cfg)
-    elif temporal_conv == "DualTCN":
+    elif temporal_conv == "DualTCN" or temporal_conv == "TwinTower":
         bb_cfg = DualTCNBackboneConfig(
             audio_group_dims=audio_group_dims,
             audio_pooled_group_dims=audio_pooled_group_dims,
