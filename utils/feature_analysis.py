@@ -156,7 +156,7 @@ def main():
     video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
 
     # 提取并可视化特征
-    target_session = 1
+    target_session = 2
     print("Extracting features...")
     audio_features, labels = extract_features(train_ds, audio_group_dims, target_session, mode="audio")
     visualize_features(audio_features, labels, modality_name="audio", session_name=target_session)    

@@ -42,6 +42,8 @@ def build_run_name(
         parts.append("mtcn")
     elif temporal_conv == "DualTCN":
         parts.append("DualTCN")
+    elif temporal_conv == "TwinTower":
+        parts.append("TwinTower")
 
     audio_feats = cfg.get("audio_features", [])
     if not isinstance(audio_feats, list):

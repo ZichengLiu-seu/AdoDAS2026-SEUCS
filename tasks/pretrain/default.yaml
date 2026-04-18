@@ -34,14 +34,14 @@ asp_beta: 0.5
 dropout: 0.3
 d_shared: 128  # 256
 
-temporal_conv: DualTCN
+temporal_conv: TwinTower
 aggregator: mean
 batch_size: 64
 lr: 0.001
 weight_decay: 0.01
 multistep: false
 warmup_epochs: 5
-epochs: 20
+epochs: 2
 seed: 42
 num_workers: 8
 amp: true

@@ -48,12 +48,13 @@ class _RealtimeFileHandler(logging.FileHandler):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2"])
+    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2", "ssl_pretrain", "ssl_posttrain"])
     p.add_argument("--config", type=str, default="tasks/a1/default.yaml")
 
     p.add_argument("--feature_root", type=str, default=None)
     p.add_argument("--manifest_dir", type=str, default=None)
     p.add_argument("--output_dir", type=str, default=None)
+    p.add_argument("--pt_path", type=str, default=None)
 
     p.add_argument("--audio_features", nargs="+", default=None)
     p.add_argument("--video_features", nargs="+", default=None)
@@ -185,6 +186,9 @@ class AdaptiveLossWeight(nn.Module):
 
     def forward(self):
         return F.softmax(self.weights, dim=0) * 0.3
+    
+    def get_weights(self):
+        return F.softmax(self.weights, dim=0).detach().cpu().numpy() * 0.3
 
 def _to_device(obj, device):
     if isinstance(obj, torch.Tensor):
@@ -426,7 +430,7 @@ def train_one_epoch_grouped(
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(
-                list(grouped_model.parameters()) + list(task_head.parameters()),
+                list(grouped_model.parameters()) + list(task_head.parameters()) + list(adaptive_loss_weight.parameters()),
                 max_norm=grad_clip,
             )
             scaler.step(optimizer)
@@ -434,7 +438,7 @@ def train_one_epoch_grouped(
         else:
             loss.backward()
             nn.utils.clip_grad_norm_(
-                list(grouped_model.parameters()) + list(task_head.parameters()),    
+                list(grouped_model.parameters()) + list(task_head.parameters()) + list(adaptive_loss_weight.parameters()),    
                 max_norm=grad_clip,
             )
             optimizer.step()
@@ -889,7 +893,7 @@ def main() -> None:
             d_shared=cfg.get("d_shared", 256),
         )
         backbone = MTCNBackbone(bb_cfg)
-    elif temporal_conv == "DualTCN":
+    elif temporal_conv == "DualTCN" or temporal_conv == "TwinTower":
         bb_cfg = DualTCNBackboneConfig(
             audio_group_dims=audio_group_dims,
             audio_pooled_group_dims=audio_pooled_group_dims,
