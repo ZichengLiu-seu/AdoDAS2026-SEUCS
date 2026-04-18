@@ -182,28 +182,27 @@ class SelfSupervisedModel(nn.Module):
         session_valid: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
 
-        session_reprs = self.backbone(flat_batch) 
-        a_low_repr, v_low_repr, a_high_repr, v_high_repr = session_reprs.unbind(dim=1)
-
+        a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)  # B*4, T, dim --> B#4, dim
         B = n_participants
-        a_low_grid = a_low_repr.view(B, 4, -1)
-        v_low_grid = v_low_repr.view(B, 4, -1) 
-        a_high_grid = a_high_repr.view(B, 4, -1)
-        v_high_grid = v_high_repr.view(B, 4, -1)
+        # a_low_grid = a_low_repr.view(B, 4, -1)  # B, 4, T*dim
+        # v_low_grid = v_low_repr.view(B, 4, -1) 
+        # a_high_grid = a_high_repr.view(B, 4, -1)
+        # v_high_grid = v_high_repr.view(B, 4, -1)
 
-        a_low_part_repr = self.aggregator(a_low_grid, session_valid)
-        v_low_part_repr = self.aggregator(v_low_grid, session_valid)
-        a_high_part_repr = self.aggregator(a_high_grid, session_valid)
-        v_high_part_repr = self.aggregator(v_high_grid, session_valid)
+        # a_low_part_repr = self.aggregator(a_low_grid, session_valid)
+        # v_low_part_repr = self.aggregator(v_low_grid, session_valid)
+        # a_high_part_repr = self.aggregator(a_high_grid, session_valid)
+        # v_high_part_repr = self.aggregator(v_high_grid, session_valid)
 
-        contrastive_repr = self.contrastive_proj(participant_repr)
+        # contrastive_repr = self.contrastive_proj(participant_repr)
 
         return {
-            "a_low_part_repr": a_low_part_repr,
-            "v_low_part_repr": v_low_part_repr,
-            "a_high_part_repr": a_high_part_repr,
-            "v_high_part_repr": v_high_part_repr,
+            "a_low_repr": a_low_repr,
+            "v_low_repr": v_low_repr,
+            "a_high_repr": a_high_repr,
+            "v_high_repr": v_high_repr,
         }
+
 
 class PostTrainModel(nn.Module):
 
@@ -220,7 +219,7 @@ class PostTrainModel(nn.Module):
             d_in=d_shared, d_out=d_shared,
             method=aggregator_method, dropout=dropout,
         )
-        self.fusion = nn.Linear(d_shared, 1)
+        self.fusion = nn.Linear(d_shared, 3)
 
     def forward(
         self,
@@ -229,9 +228,10 @@ class PostTrainModel(nn.Module):
         session_valid: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
 
-        session_reprs = self.backbone(flat_batch) 
-
+        a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)
         B = n_participants
+        session_reprs = torch.cat([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=-1)
+
         session_grid = session_reprs.view(B, 4, -1)
 
         participant_repr = session_grid.aggregator(session_grid, session_valid) 

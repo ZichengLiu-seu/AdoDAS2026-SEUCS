@@ -102,15 +102,22 @@ def a2_ordinal_loss(
     return F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight)
 
 
-def contrastive_loss(a_repr, v_repr, participant_ids, temperature: float = 0.5) -> torch.Tensor:
-    a_norm = F.normalize(a_repr, dim=-1)
-    v_norm = F.normalize(v_repr, dim=-1)
+class contrastive_loss():
+    def __init__(self, N, device, temperature: float = 0.5):
+        self.N = N
+        row_group = torch.arange(N).unsqueeze(1) // 4
+        col_group = torch.arange(N).unsqueeze(0) // 4
+        self.mask = torch.eq(row_group, col_group).float().to(device)
+        self.temperature = temperature
 
-    similarity_matrix = torch.matmul(a_norm, v_norm.T) / temperature
+    def __call__(self, a_repr, v_repr) -> torch.Tensor:
+        N, _ = a_repr.shape
+        a_norm = F.normalize(a_repr, dim=-1)
+        v_norm = F.normalize(v_repr, dim=-1)
 
-    mask = torch.eq(participant_ids.unsqueeze(1), participant_ids.unsqueeze(0)).float()
+        similarity_matrix = torch.matmul(a_norm, v_norm.T) / self.temperature
 
-    logits = similarity_matrix - torch.logsumexp(similarity_matrix, dim=1, keepdim=True)
-    loss = -torch.sum(mask * logits) / mask.sum()
+        logits = similarity_matrix - torch.logsumexp(similarity_matrix, dim=1, keepdim=True)
+        loss = -torch.sum(self.mask[:N, :N] * logits) / self.mask[:N, :N].sum()
 
-    return loss
+        return loss

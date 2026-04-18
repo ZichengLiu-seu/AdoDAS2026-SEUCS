@@ -342,8 +342,8 @@ class TwinTowerBackbone(nn.Module):
         self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
         self.video_group_names = sorted(cfg.video_group_dims.keys())
 
-        self.audio_gated_fusion = GatedFusion(cfg.d_adapter)
-        self.video_gated_fusion = GatedFusion(cfg.d_adapter)
+        self.audio_gated_fusion = GatedFusion(cfg.d_adapter, cfg.d_adapter)
+        self.video_gated_fusion = GatedFusion(cfg.d_adapter, cfg.d_adapter)
 
 
         self.audio_ssl_proj = nn.Linear(cfg.audio_group_dims["ssl_embed"], 64)
@@ -371,7 +371,11 @@ class TwinTowerBackbone(nn.Module):
         # a = a * mask_a.unsqueeze(-1).float()
         # v = v * mask_v.unsqueeze(-1).float()
 
-        stacked_repr = torch.stack([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=1)
+        return [a_low_repr.mean(dim=1), v_low_repr.mean(dim=1),
+                 a_high_repr.mean(dim=1), v_high_repr.mean(dim=1)]
 
-        return stacked_repr
 
+    def load_pretrained(self, pt_path: str, device: torch.device) -> None:
+        state_dict = torch.load(pt_path, map_location="cpu")["model"]
+        self.load_state_dict(state_dict, strict=False)
+        
