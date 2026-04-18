@@ -23,13 +23,15 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import yaml
 
-from .runner import parse_args, load_config, seed_everything, build_run_name, setup_run_dirs, setup_logging, _fmt_duration, _to_device, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, AdaptiveLossWeight, _build_scheduler, EarlyStopping, _flatten_valid_session_mask
+from .runner import parse_args, load_config, seed_everything, build_run_name, setup_run_dirs, setup_logging, \
+    _fmt_duration, _to_device, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, _build_scheduler, \
+        AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped_model
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.grouped_model import GroupedModel, SelfSupervisedModel, PostTrainModel, CORALHead
 from .models.mtcn_backbone import MTCNBackbone, BackboneConfig
 from .models.my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
-from .models.heads import contrastive_loss
+from .models.heads import contrastive_loss, A1Head, A2OrdinalHead
 from .utils.ckpt import save_checkpoint, load_checkpoint
 from .utils.run_naming import build_run_name, setup_run_dirs
 from .utils.run_metadata import RunMetadata
@@ -37,7 +39,7 @@ from .utils.run_metadata import RunMetadata
 
 log = logging.getLogger("pretrain_grouped")
 
-def train_one_epoch(
+def pretrain_one_epoch(
     ssl_model: SelfSupervisedModel,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
@@ -116,6 +118,26 @@ def train_one_epoch(
     
     pbar.close()
     return total_loss / max(n_batches, 1)
+
+
+def posttrain_one_epoch(
+    ssl_model: SelfSupervisedModel,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    task: str,
+    epoch: int,
+    epochs: int,
+    scaler=None,
+    use_amp: bool = True,
+    grad_clip: float = 1.0,
+    best_metric: float = -1.0,
+    feature_noise_std: float = 0.01,
+    adaptive_loss_weight: AdaptiveLossWeight | None = None,
+)->float:    
+    ssl_model.train()
+    total_loss = 0.0
+    n_batches = 0
 
 
 def validate(
@@ -322,7 +344,7 @@ def preTrain():
     for epoch in range(1, epochs + 1):
         t0 = time.time()
 
-        train_loss = train_one_epoch(
+        train_loss = pretrain_one_epoch(
             ssl_model, train_loader, optimizer, device,
             task, epoch, epochs, scaler, use_amp, 
             grad_clip=grad_clip,
@@ -494,7 +516,7 @@ def postTrain():
         else:
             task_head = A2OrdinalHead(bb_cfg.d_shared).to(device)
 
-    n_params = sum(p.numel() for p in grouped_model.parameters()) + sum(p.numel() for p in task_head.parameters())
+    n_params = sum(p.numel() for p in ssl_model.parameters()) + sum(p.numel() for p in task_head.parameters())
     log.info(f"Model params: {n_params:,}")
 
     use_amp = bool(cfg.get("amp", True))
@@ -561,3 +583,268 @@ def postTrain():
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
+
+        train_loss = posttrain_one_epoch(
+            ssl_model, task_head, train_loader, optimizer, device,
+            task, epoch, epochs, scaler, use_amp,
+            pos_weight=pos_weight_t, grad_clip=grad_clip,
+            session_loss_weight=session_loss_weight,
+            session_type_loss_weight=session_type_loss_weight,
+            best_metric=best_metric,
+            label_smoothing=label_smoothing,
+            feature_noise_std=feature_noise_std,
+            adaptive_loss_weight=adaptive_loss_weight,
+        )
+
+        val_metrics = validate_grouped_model(
+            ssl_model, task_head, val_loader, device,
+            task, epoch, epochs, use_amp, pos_weight=pos_weight_t,
+            decode_method=cfg.get("decode_method", "expectation"),
+        )
+        scheduler.step()
+
+        elapsed = time.time() - t0
+        total_elapsed = time.time() - t_start
+        eta = (total_elapsed / epoch) * (epochs - epoch)
+        lr_now = optimizer.param_groups[0]["lr"]
+        vram_gb = torch.cuda.max_memory_allocated() / 1024**3
+
+        primary = val_metrics["primary_metric"]
+        is_best = primary > best_metric
+        marker = " *" if is_best else ""
+
+        if is_best:
+            best_metric = primary
+            save_checkpoint(
+                run_dirs["checkpoints"] / "best.pt",
+                grouped_model, optimizer, epoch, best_metric,
+                extra={"head_state_dict": task_head.state_dict()},
+            )
+            log.info(f"  >>> New best {metric_name}={best_metric:.4f} saved at epoch {epoch}.")
+            meta.update_best(epoch, val_metrics)
+
+        es_value = val_metrics["loss"] if early_stop_metric == "val_loss" else primary
+        if early_stop.step(es_value):
+            log.info(f"  EarlyStopping triggered at epoch {epoch} (patience={patience}, metric={early_stop_metric})")
+            break
+
+    log.info("=" * 90)
+    total_time = time.time() - t_start
+    log.info(f"Training complete. Best {metric_name}={best_metric:.4f}, time={_fmt_duration(total_time)}")
+
+    log.info("Loading best checkpoint for submission generation ...")
+    state = load_checkpoint(run_dirs["checkpoints"] / "best.pt", grouped_model, optimizer=None)
+    task_head.load_state_dict(state["head_state_dict"])
+    grouped_model.to(device)
+    task_head.to(device)
+
+    submission_level = cfg.get("submission_level", "participant")
+    decode_method = _normalize_decode_method(cfg.get("decode_method", "expectation"))
+    log.info(f"Submission level: {submission_level}")
+    log.info(f"Decode method: {decode_method}")
+
+    a1_biases = None
+    a2_offsets = None
+    selected_decode_method = decode_method
+
+    if task == "a1":
+        log.info("Calibrating per-task bias offsets on val ...")
+        val_logits, val_labels = collect_val_logits_grouped_a1(
+            grouped_model, task_head, val_loader, device, use_amp,
+            submission_level=submission_level,
+        )
+        biases, cal_f1s = calibrate_a1_bias(val_logits, val_labels)
+        for t, name in enumerate(["D", "A", "S"]):
+            log.info(f"  {name}: bias={biases[t]:+.2f}  F1_cal={cal_f1s[t]:.4f}")
+        cal_mean_f1 = float(np.mean(cal_f1s))
+        best_raw_f1 = float(meta.meta.get("best_metrics", {}).get("mean_f1", best_metric))
+        best_selected_f1 = float(meta.meta.get("best_metrics", {}).get("primary_metric", best_metric))
+        log.info(
+            f"  Mean calibrated F1: {cal_mean_f1:.4f} "
+            f"(vs selected best: {best_selected_f1:.4f}, raw best: {best_raw_f1:.4f})"
+        )
+        a1_biases = biases
+        final_a1_metric = max(best_raw_f1, cal_mean_f1)
+        final_a1_strategy = "bias_calibrated" if cal_mean_f1 >= best_raw_f1 else "raw"
+        meta.set_extra("final_selected_strategy", final_a1_strategy)
+        meta.set_extra("final_selected_metrics", {
+            "mean_f1": final_a1_metric,
+            "mean_f1_raw": best_raw_f1,
+            "mean_f1_calibrated": cal_mean_f1,
+            "auroc": meta.meta.get("best_metrics", {}).get("auroc"),
+        })
+
+        cal_data = {"biases": biases.tolist(), "cal_f1": cal_f1s, "mean_cal_f1": cal_mean_f1}
+        with open(run_dirs["calibration"] / "a1_bias_grouped.json", "w") as f:
+            json.dump(cal_data, f, indent=2)
+    else:
+        log.info("Calibrating and selecting A2 decode strategy on val ...")
+        val_logits, val_labels = collect_val_logits_grouped_a2(
+            grouped_model, task_head, val_loader, device, use_amp,
+            submission_level=submission_level,
+        )
+        val_labels_int = val_labels.astype(int)
+        raw_results = _evaluate_a2_decode_candidates(
+            task_head,
+            torch.from_numpy(val_logits).float(),
+            val_labels_int,
+            decode_methods=["argmax", "monotonic", "expectation"],
+        )
+        calibrated_results = {}
+        for method in ("argmax", "monotonic", "expectation"):
+            offsets, item_qwks = calibrate_a2_thresholds(
+                val_logits,
+                val_labels_int,
+                decode_method=method,
+            )
+            preds = _decode_a2_logits(
+                task_head,
+                torch.from_numpy(val_logits).float() + torch.as_tensor(offsets, dtype=torch.float32),
+                decode_method=method,
+            ).cpu().numpy()
+            calibrated_results[f"calibrated_{method}"] = {
+                "preds": preds,
+                "qwk": mean_qwk(preds, val_labels_int),
+                "mae": mean_mae(preds, val_labels_int),
+                "decode_method": method,
+                "offsets": offsets,
+                "item_qwks": item_qwks,
+            }
+
+        strategy_results = {**raw_results, **calibrated_results}
+        best_strategy, best_result = _select_best_a2_result(strategy_results)
+        selected_decode_method = str(best_result["decode_method"])
+        a2_offsets = best_result.get("offsets")
+
+        log.info("  A2 decode comparison on val:")
+        for name in ("argmax", "monotonic", "expectation", "calibrated_argmax", "calibrated_monotonic", "calibrated_expectation"):
+            result = strategy_results[name]
+            preds = result["preds"]
+            total = preds.size
+            dist = [np.sum(preds == v) / total * 100 for v in range(4)]
+            log.info(
+                f"    {name:<22} QWK={float(result['qwk']):.4f} MAE={float(result['mae']):.4f} "
+                f"| 0={dist[0]:.1f}% 1={dist[1]:.1f}% 2={dist[2]:.1f}% 3={dist[3]:.1f}%"
+            )
+
+        log.info(
+            f"  Selected A2 strategy: {best_strategy} "
+            f"(decode={selected_decode_method}, QWK={float(best_result['qwk']):.4f}, MAE={float(best_result['mae']):.4f})"
+        )
+
+        meta.set_extra("final_selected_strategy", best_strategy)
+        meta.set_extra("final_selected_metrics", {
+            "mean_qwk": float(best_result["qwk"]),
+            "mean_mae": float(best_result["mae"]),
+            "decode_method": selected_decode_method,
+        })
+
+        cal_data = {
+            "selected_strategy": best_strategy,
+            "selected_decode_method": selected_decode_method,
+            "selected_qwk": float(best_result["qwk"]),
+            "selected_mae": float(best_result["mae"]),
+            "strategies": {
+                name: {
+                    "decode_method": str(result["decode_method"]),
+                    "qwk": float(result["qwk"]),
+                    "mae": float(result["mae"]),
+                    **({"offsets": result["offsets"].tolist()} if "offsets" in result else {}),
+                    **({"item_qwks": result["item_qwks"]} if "item_qwks" in result else {}),
+                }
+                for name, result in strategy_results.items()
+            },
+        }
+        with open(run_dirs["calibration"] / "a2_threshold_offsets_grouped.json", "w") as f:
+            json.dump(cal_data, f, indent=2)
+
+    if bool(cfg.get("run_inference_after_train", False)):
+        run_dirs["submissions"].mkdir(parents=True, exist_ok=True)
+        for split_name in ("val", "test_hidden"):
+            manifest_path = manifest_dir / f"{split_name}.csv"
+            if not manifest_path.exists():
+                continue
+            ds = GroupedParticipantDataset(manifest_path, feat_cfg, split=split_name)
+            loader = DataLoader(
+                ds, batch_size=batch_size, shuffle=False,
+                num_workers=num_workers, collate_fn=grouped_collate_fn,
+            )
+
+            pids, sessions, preds = generate_submission_grouped(
+                grouped_model, task_head, loader, device, task, use_amp,
+                desc=f"Submit {split_name}",
+                submission_level=submission_level,
+                a1_biases=a1_biases,
+                decode_method=selected_decode_method,
+                a2_threshold_offsets=a2_offsets,
+            )
+
+            manifest_df = pd.read_csv(manifest_path)
+            file_ids = []
+            filtered_preds = []
+            if submission_level == "participant":
+                pid_to_info = {}
+                for _, row in manifest_df.iterrows():
+                    pid = str(row["anon_pid"])
+                    pid_to_info.setdefault(pid, (str(row["anon_school"]), str(row["anon_class"])))
+
+                for pid, pred in zip(pids, preds):
+                    pid_str = str(pid)
+                    info = pid_to_info.get(pid_str)
+                    if info is None:
+                        continue
+                    school, cls = info
+                    file_ids.append(f"{school}_{cls}_{pid_str}")
+                    filtered_preds.append(pred)
+                expected_rows = int(manifest_df["anon_pid"].astype(str).nunique())
+            else:
+                pid_to_info = {}
+                for _, row in manifest_df.iterrows():
+                    pid_to_info[(str(row["anon_pid"]), str(row["session"]))] = (
+                        str(row["anon_school"]), str(row["anon_class"])
+                    )
+
+                for pid, sess, pred in zip(pids, sessions, preds):
+                    key = (str(pid), str(sess))
+                    info = pid_to_info.get(key)
+                    if info is None:
+                        continue
+                    school, cls = info
+                    file_ids.append(f"{school}_{cls}_{key[0]}_{key[1]}")
+                    filtered_preds.append(pred)
+                expected_rows = len(manifest_df)
+
+            if filtered_preds:
+                preds = np.asarray(filtered_preds)
+            elif task == "a1":
+                preds = np.zeros((0, 3), dtype=np.float32)
+            else:
+                preds = np.zeros((0, 21), dtype=np.int64)
+            if len(file_ids) != expected_rows:
+                log.warning(
+                    f"Submission row count mismatch for {split_name}: expected={expected_rows} generated={len(file_ids)}"
+                )
+
+            if task == "a1":
+                sub = pd.DataFrame({
+                    "file_id": file_ids,
+                    "p_D": preds[:, 0],
+                    "p_A": preds[:, 1],
+                    "p_S": preds[:, 2],
+                })
+            else:
+                item_cols = [f"d{i:02d}" for i in range(1, 22)]
+                sub = pd.DataFrame({"file_id": file_ids})
+                for j, col in enumerate(item_cols):
+                    sub[col] = preds[:, j]
+
+            out_path = run_dirs["submissions"] / f"submission_{task}_{split_name}.csv"
+            sub.to_csv(out_path, index=False)
+            log.info(f"Wrote {len(sub)} rows to {out_path}")
+    else:
+        log.info("Skipping submission generation after training; use infer.py for release inference.")
+
+    meta.finish("completed")
+    log.info(f"Run complete: {run_name}")
+    log.info(f"Output dir: {run_dirs['root']}")
+    

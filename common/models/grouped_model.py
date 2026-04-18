@@ -220,6 +220,8 @@ class PostTrainModel(nn.Module):
             method=aggregator_method, dropout=dropout,
         )
         self.fusion = nn.Linear(d_shared, 3)
+        self.session_type_head = SessionTypeClassifier(d_in=d_shared)
+
 
     def forward(
         self,
@@ -236,10 +238,10 @@ class PostTrainModel(nn.Module):
 
         participant_repr = session_grid.aggregator(session_grid, session_valid) 
 
-        task_logits = self.task_head(participant_repr).squeeze(-1)
+        session_type_logits = self.session_type_head(participant_repr).squeeze(-1)
 
         return {
             "session_reprs": session_reprs,
             "participant_repr": participant_repr,
-            "task_logits": task_logits,
+            "session_type_logits": session_type_logits,
         }

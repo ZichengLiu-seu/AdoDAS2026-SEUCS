@@ -376,6 +376,5 @@ class TwinTowerBackbone(nn.Module):
 
 
     def load_pretrained(self, pt_path: str, device: torch.device) -> None:
-        state_dict = torch.load(pt_path, map_location="cpu")["model"]
+        state_dict = torch.load(pt_path, map_location="cpu")
         self.load_state_dict(state_dict, strict=False)
-        
