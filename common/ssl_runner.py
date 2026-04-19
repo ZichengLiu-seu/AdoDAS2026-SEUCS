@@ -25,19 +25,19 @@ import yaml
 
 from .runner import parse_args, load_config, seed_everything, build_run_name, setup_run_dirs, setup_logging, \
     _fmt_duration, _to_device, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, _build_scheduler, \
-        AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped
+    AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped, \
+    _normalize_decode_method, collect_val_logits_grouped_a1, calibrate_a1_bias,\
+    generate_submission_grouped
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.grouped_model import GroupedModel, SelfSupervisedModel, PostTrainModel, CORALHead
 from .models.mtcn_backbone import MTCNBackbone, BackboneConfig
 from .models.my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
-from .models.heads import contrastive_loss, A1Head, A2OrdinalHead
+from .models.heads import contrastive_loss, a1_loss, a2_ordinal_loss, A1Head, A2OrdinalHead
 from .utils.ckpt import save_checkpoint, load_checkpoint
 from .utils.run_naming import build_run_name, setup_run_dirs
 from .utils.run_metadata import RunMetadata
 
-
-log = logging.getLogger("pretrain_grouped")
 
 def pretrain_one_epoch(
     ssl_model: SelfSupervisedModel,
@@ -276,6 +276,7 @@ def validate(
 
 
 def preTrain():
+    log = logging.getLogger("pretrain_grouped")
     args = parse_args()
     cfg = load_config(args)
     task = cfg["task"]
@@ -490,6 +491,7 @@ def preTrain():
 
 
 def postTrain():
+    log = logging.getLogger("posttrain_grouped")
     args = parse_args()
     cfg = load_config(args)
     task = cfg["task"]
@@ -537,6 +539,7 @@ def postTrain():
     val_ds = GroupedParticipantDataset(manifest_dir / "val.csv", feat_cfg, split="val")
 
     batch_size = cfg.get("batch_size", 64)
+    print(f"[DEBUG] batch_size type: {type(batch_size)}")
     num_workers = cfg.get("num_workers", 8)
     log.info(f"Train: {len(train_ds)} participants, Val: {len(val_ds)} participants")
 
@@ -589,11 +592,13 @@ def postTrain():
     backbone = TwinTowerBackbone(bb_cfg)
     backbone.load_pretrained(pt_path, device)
 
+    d_low=cfg.get("d_low", 32)
+    d_high=cfg.get("d_high", 128)
+    d_backbone_out = (d_low + d_high) * 2
     ssl_model = PostTrainModel(
         backbone=backbone,
         d_shared=bb_cfg.d_shared,
-        d_low=cfg.get("d_low", 32),
-        d_high=cfg.get("d_high", 128),
+        d_backbone_out=d_backbone_out,
         aggregator_method=cfg.get("aggregator", "mlp"),
         dropout=cfg.get("dropout", 0.2),
     ).to(device)
@@ -601,13 +606,13 @@ def postTrain():
     use_coral = bool(cfg.get("use_coral", False))
     if task == "ssl_posttrain_a1":
         bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
-        task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
+        task_head = A1Head(d_backbone_out, bias_init=bias_init).to(device)
     elif task == "ssl_posttrain_a2":
         if use_coral:
-            task_head = CORALHead(bb_cfg.d_shared).to(device)
+            task_head = CORALHead(d_backbone_out).to(device)
             log.info("Using CORAL head for A2")
         else:
-            task_head = A2OrdinalHead(bb_cfg.d_shared).to(device)
+            task_head = A2OrdinalHead(d_backbone_out).to(device)
 
     n_params = sum(p.numel() for p in ssl_model.parameters()) + sum(p.numel() for p in task_head.parameters())
     log.info(f"Model params: {n_params:,}")

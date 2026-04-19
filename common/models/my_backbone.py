@@ -17,6 +17,8 @@ class DualTCNBackboneConfig:
 
     d_adapter: int = 64
     d_model: int = 256
+    d_low: int = 32
+    d_high: int = 128
 
     tcn_layers: int = 4
     tcn_kernel_size: int = 3

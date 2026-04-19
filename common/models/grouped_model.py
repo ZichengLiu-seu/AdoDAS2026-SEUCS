@@ -91,15 +91,15 @@ class GroupedModel(nn.Module):
         session_valid: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
 
-        session_reprs = self.backbone(flat_batch) 
+        session_reprs = self.backbone(flat_batch)  #  B*4, d_shared
 
         B = n_participants
-        session_grid = session_reprs.view(B, 4, -1)
+        session_grid = session_reprs.view(B, 4, -1)  # B, 4, d_shared
 
 
-        participant_repr = self.aggregator(session_grid, session_valid) 
+        participant_repr = self.aggregator(session_grid, session_valid)   # B, d_shared
 
-        session_type_logits = self.session_type_head(session_reprs) 
+        session_type_logits = self.session_type_head(session_reprs)  # B*4, 4
 
         return {
             "session_reprs": session_reprs,
@@ -210,8 +210,7 @@ class PostTrainModel(nn.Module):
         self,
         backbone: TwinTowerBackbone,
         d_shared: int,
-        d_low: int,
-        d_high: int,
+        d_backbone_out: int,
         aggregator_method: str = "mlp",
         dropout: float = 0.2,
     ):
@@ -222,7 +221,7 @@ class PostTrainModel(nn.Module):
             method=aggregator_method, dropout=dropout,
         )
         self.fusion = nn.Linear(d_shared, 3)
-        self.session_type_head = SessionTypeClassifier(d_in=(d_low + d_high) * 2)
+        self.session_type_head = SessionTypeClassifier(d_in=d_backbone_out)
 
 
     def forward(
@@ -240,7 +239,7 @@ class PostTrainModel(nn.Module):
 
         participant_repr = self.aggregator(session_grid, session_valid) 
 
-        session_type_logits = self.session_type_head(participant_repr).squeeze(-1)
+        session_type_logits = self.session_type_head(session_reprs).squeeze(-1)
 
         return {
             "session_reprs": session_reprs,

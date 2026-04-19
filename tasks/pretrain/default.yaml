@@ -39,15 +39,15 @@ d_shared: 128  # 256
 temporal_conv: TwinTower
 aggregator: mean
 batch_size: 64
-lr: 0.001
+lr: 0.005
 weight_decay: 0.01
 multistep: false
-warmup_epochs: 5
-epochs: 2
+warmup_epochs: 2
+epochs: 20
 seed: 42
 num_workers: 8
 amp: true
-preload: false
+preload: true
 grad_clip: 1.0
 use_pos_weight: true
 patience: 6
@@ -58,4 +58,4 @@ decode_method: auto
 label_smoothing: 0.0
 feature_noise_std: 0.0
 session_drop_prob: 0.0
-early_stop_metric: primary
+early_stop_metric: val_loss

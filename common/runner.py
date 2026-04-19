@@ -483,9 +483,9 @@ def validate_grouped(
         session_valid = batch["session_valid"].to(device)
         B = batch["n_participants"]
 
-        if task == "a1":
+        if task == "a1" or task == "ssl_posttrain_a1":
             targets = batch["participant_y_a1"].to(device)
-        else:
+        elif task == "a2" or task == "ssl_posttrain_a2":
             targets = batch["participant_y_a2"].to(device).long()
 
         with torch.amp.autocast("cuda", enabled=use_amp, dtype=torch.bfloat16):
@@ -496,14 +496,14 @@ def validate_grouped(
             # log.info(f"DEBUG: participant_repr: {var}")
             p_logits = task_head(out["participant_repr"])
             # print(f"DEBUG: p_logits: {p_logits}")
-            if task == "a1":
+            if task == "a1" or task == "ssl_posttrain_a1":
                 loss = a1_loss(p_logits, targets, pos_weight=pos_weight)
-            else:
+            elif task == "a2" or task == "ssl_posttrain_a2":
                 loss = a2_ordinal_loss(p_logits, targets, pos_weight=pos_weight)
 
             s_logits = task_head(out["session_reprs"])
 
-        if task == "a1":
+        if task == "a1" or task == "ssl_posttrain_a1":
             logits_np = p_logits.float().cpu().numpy()
             # print(f"DEBUG: logits_np: {logits_np}")
             probs = torch.sigmoid(p_logits.float()).cpu().numpy()
@@ -514,7 +514,7 @@ def validate_grouped(
 
             s_probs = torch.sigmoid(s_logits.float()).cpu().numpy()
             all_sess_preds.append(s_probs)
-        else:
+        elif task == "a2" or task == "ssl_posttrain_a2":
             if decode_method == "auto":
                 all_logits.append(p_logits.float().cpu())
             else:
@@ -527,7 +527,7 @@ def validate_grouped(
 
     avg_loss = total_loss / max(n_batches, 1)
     # print(f"DEBUG: all_preds: {all_preds}")
-    if task == "a1":
+    if task == "a1" or task == "ssl_posttrain_a1":
         probs_np = np.concatenate(all_preds)
         labels_np = np.concatenate(all_labels)
         logits_np = np.concatenate(all_logits)
@@ -579,7 +579,7 @@ def validate_grouped(
             "primary_metric": max(mf1, cal_mf1),
             "selection_source": selection_source,
         }
-    else:
+    elif task == "a2" or task == "ssl_posttrain_a2":
         labels_np = np.concatenate(all_labels)
         auto_selected_decode = None
         if decode_method == "auto":
