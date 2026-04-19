@@ -25,7 +25,7 @@ import yaml
 
 from .runner import parse_args, load_config, seed_everything, build_run_name, setup_run_dirs, setup_logging, \
     _fmt_duration, _to_device, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, _build_scheduler, \
-        AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped_model
+        AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.grouped_model import GroupedModel, SelfSupervisedModel, PostTrainModel, CORALHead
@@ -122,6 +122,7 @@ def pretrain_one_epoch(
 
 def posttrain_one_epoch(
     ssl_model: SelfSupervisedModel,
+    task_head: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
@@ -130,14 +131,104 @@ def posttrain_one_epoch(
     epochs: int,
     scaler=None,
     use_amp: bool = True,
+    pos_weight=None,
     grad_clip: float = 1.0,
+    session_loss_weight: float = 0.5,
+    session_type_loss_weight: float = 0.15,
     best_metric: float = -1.0,
+    label_smoothing: float = 0.0,
     feature_noise_std: float = 0.01,
     adaptive_loss_weight: AdaptiveLossWeight | None = None,
 )->float:    
     ssl_model.train()
+    task_head.train()
     total_loss = 0.0
     n_batches = 0
+
+    desc = f"Train {epoch}/{epochs}"
+    if best_metric >= 0:
+        desc += f" [best={best_metric:.4f}]"
+    pbar = tqdm(loader, desc=desc, leave=False, dynamic_ncols=True)
+
+    for batch in pbar:
+        flat_batch = _to_device(batch["flat_batch"], device)
+        session_valid = batch["session_valid"].to(device)
+        session_types = batch["session_types"].to(device)
+        B = batch["n_participants"]
+
+        if feature_noise_std > 0.0:
+            noise_mask = (~flat_batch["pad_mask"]).unsqueeze(-1).float()
+            for key in ("audio_groups", "video_groups"):
+                for name in flat_batch[key]:
+                    flat_batch[key][name] = flat_batch[key][name] + torch.randn_like(
+                        flat_batch[key][name]
+                    ) * feature_noise_std * noise_mask
+
+        if task == "ssl_posttrain_a1":
+            targets = batch["participant_y_a1"].to(device)
+        elif task == "ssl_posttrain_a2":
+            targets = batch["participant_y_a2"].to(device).long()
+
+        with torch.amp.autocast("cuda", enabled=use_amp, dtype=torch.bfloat16):
+            out = ssl_model(flat_batch, B, session_valid)
+            valid_session_mask = _flatten_valid_session_mask(session_valid)
+            has_valid_sessions = bool(valid_session_mask.any().item())
+
+            p_logits = task_head(out["participant_repr"])
+            if task == "ssl_posttrain_a1":
+                main_loss = a1_loss(p_logits, targets, pos_weight=pos_weight, label_smoothing=label_smoothing)
+            elif task == "ssl_posttrain_a2":
+                main_loss = a2_ordinal_loss(p_logits, targets, pos_weight=pos_weight, label_smoothing=label_smoothing)
+
+            if has_valid_sessions:
+                s_logits = task_head(out["session_reprs"])[valid_session_mask]
+                if task == "ssl_posttrain_a1":
+                    s_targets = targets.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 3)[valid_session_mask]
+                    sess_loss = a1_loss(s_logits, s_targets, pos_weight=pos_weight, label_smoothing=label_smoothing)
+                elif task == "ssl_posttrain_a2":
+                    s_targets = targets.unsqueeze(1).expand(-1, 4, -1).reshape(-1, 21)[valid_session_mask]
+                    sess_loss = a2_ordinal_loss(
+                        s_logits, s_targets, pos_weight=pos_weight, label_smoothing=label_smoothing
+                    )
+
+                type_loss = F.cross_entropy(
+                    out["session_type_logits"][valid_session_mask],
+                    session_types[valid_session_mask],
+                )
+            else:
+                sess_loss = p_logits.new_zeros(())
+                type_loss = p_logits.new_zeros(())
+
+            if adaptive_loss_weight is not None:
+                weights = adaptive_loss_weight()
+                loss = main_loss + weights[0] * sess_loss + weights[1] * type_loss
+            else:
+                loss = main_loss + session_loss_weight * sess_loss + session_type_loss_weight * type_loss
+
+        optimizer.zero_grad()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(
+                list(ssl_model.parameters()) + list(task_head.parameters()) + list(adaptive_loss_weight.parameters()),
+                max_norm=grad_clip,
+            )
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            nn.utils.clip_grad_norm_(
+                list(ssl_model.parameters()) + list(task_head.parameters()) + list(adaptive_loss_weight.parameters()),    
+                max_norm=grad_clip,
+            )
+            optimizer.step()
+
+        total_loss += loss.item()
+        n_batches += 1
+        pbar.set_postfix_str(f"{loss.item():.4f}")
+
+    pbar.close()
+    return total_loss / max(n_batches, 1)
 
 
 def validate(
@@ -501,15 +592,17 @@ def postTrain():
     ssl_model = PostTrainModel(
         backbone=backbone,
         d_shared=bb_cfg.d_shared,
+        d_low=cfg.get("d_low", 32),
+        d_high=cfg.get("d_high", 128),
         aggregator_method=cfg.get("aggregator", "mlp"),
         dropout=cfg.get("dropout", 0.2),
     ).to(device)
 
     use_coral = bool(cfg.get("use_coral", False))
-    if task == "a1":
+    if task == "ssl_posttrain_a1":
         bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
         task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
-    else:
+    elif task == "ssl_posttrain_a2":
         if use_coral:
             task_head = CORALHead(bb_cfg.d_shared).to(device)
             log.info("Using CORAL head for A2")
@@ -527,11 +620,11 @@ def postTrain():
     grad_clip = cfg.get("grad_clip", 1.0)
     pos_weight_t = None
     if cfg.get("use_pos_weight", True):
-        if task == "a1":
+        if task == "ssl_posttrain_a1":
             pw = _compute_pos_weight_a1(manifest_dir / "train.csv")
             pos_weight_t = torch.tensor(pw, dtype=torch.float32, device=device)
             log.info(f"pos_weight [D/A/S]: {pw[0]:.2f} / {pw[1]:.2f} / {pw[2]:.2f}")
-        else:
+        elif task == "ssl_posttrain_a2":
             pos_weight_t = compute_a2_pos_weight(manifest_dir / "train.csv").to(device)
             log.info(f"A2 pos_weight shape: {pos_weight_t.shape}")
 
@@ -571,13 +664,13 @@ def postTrain():
     log.info(f"Session drop prob: {session_drop_prob}")
 
     best_metric = -1.0
-    metric_name = "F1" if task == "a1" else "QWK"
+    metric_name = "F1" if task == "ssl_posttrain_a1" else "QWK"
     t_start = time.time()
 
     log.info("=" * 90)
-    if task == "a1":
+    if task == "ssl_posttrain_a1":
         log.info("  Epoch  |    LR     | Train Loss | Val Loss | F1 raw | F1 sel |  AUROC | F1[D/A/S]       | Time")
-    else:
+    elif task == "ssl_posttrain_a2":
         log.info("  Epoch  |    LR     | Train Loss | Val Loss | mean QWK | mean MAE | Time")
     log.info("=" * 90)
 
@@ -596,7 +689,7 @@ def postTrain():
             adaptive_loss_weight=adaptive_loss_weight,
         )
 
-        val_metrics = validate_grouped_model(
+        val_metrics = validate_grouped(
             ssl_model, task_head, val_loader, device,
             task, epoch, epochs, use_amp, pos_weight=pos_weight_t,
             decode_method=cfg.get("decode_method", "expectation"),
@@ -613,11 +706,27 @@ def postTrain():
         is_best = primary > best_metric
         marker = " *" if is_best else ""
 
+        if task == "ssl_posttrain_a1":
+            pcf1 = val_metrics.get("pcf1", [0, 0, 0])
+            selected_f1 = val_metrics["primary_metric"]
+            log.info(
+                f"  {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_metrics['loss']:.4f}  | "
+                f"{val_metrics['mean_f1']:.4f} | {selected_f1:.4f} | {val_metrics['auroc']:.4f} | "
+                f"{pcf1[0]:.3f}/{pcf1[1]:.3f}/{pcf1[2]:.3f} | "
+                f"{_fmt_duration(elapsed)} ETA {_fmt_duration(eta)} VRAM {vram_gb:.1f}G{marker}"
+            )
+        elif task == "ssl_posttrain_a2":
+            log.info(
+                f"  {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_metrics['loss']:.4f}  | "
+                f" {val_metrics['mean_qwk']:.4f}  |  {val_metrics['mean_mae']:.4f}  | "
+                f"{_fmt_duration(elapsed)} ETA {_fmt_duration(eta)} VRAM {vram_gb:.1f}G{marker}"
+            )
+
         if is_best:
             best_metric = primary
             save_checkpoint(
                 run_dirs["checkpoints"] / "best.pt",
-                grouped_model, optimizer, epoch, best_metric,
+                ssl_model, optimizer, epoch, best_metric,
                 extra={"head_state_dict": task_head.state_dict()},
             )
             log.info(f"  >>> New best {metric_name}={best_metric:.4f} saved at epoch {epoch}.")
@@ -633,9 +742,9 @@ def postTrain():
     log.info(f"Training complete. Best {metric_name}={best_metric:.4f}, time={_fmt_duration(total_time)}")
 
     log.info("Loading best checkpoint for submission generation ...")
-    state = load_checkpoint(run_dirs["checkpoints"] / "best.pt", grouped_model, optimizer=None)
+    state = load_checkpoint(run_dirs["checkpoints"] / "best.pt", ssl_model, optimizer=None)
     task_head.load_state_dict(state["head_state_dict"])
-    grouped_model.to(device)
+    ssl_model.to(device)
     task_head.to(device)
 
     submission_level = cfg.get("submission_level", "participant")
@@ -647,10 +756,10 @@ def postTrain():
     a2_offsets = None
     selected_decode_method = decode_method
 
-    if task == "a1":
+    if task == "ssl_posttrain_a1":
         log.info("Calibrating per-task bias offsets on val ...")
         val_logits, val_labels = collect_val_logits_grouped_a1(
-            grouped_model, task_head, val_loader, device, use_amp,
+            ssl_model, task_head, val_loader, device, use_amp,
             submission_level=submission_level,
         )
         biases, cal_f1s = calibrate_a1_bias(val_logits, val_labels)
@@ -677,10 +786,10 @@ def postTrain():
         cal_data = {"biases": biases.tolist(), "cal_f1": cal_f1s, "mean_cal_f1": cal_mean_f1}
         with open(run_dirs["calibration"] / "a1_bias_grouped.json", "w") as f:
             json.dump(cal_data, f, indent=2)
-    else:
+    elif task == "ssl_posttrain_a2":
         log.info("Calibrating and selecting A2 decode strategy on val ...")
         val_logits, val_labels = collect_val_logits_grouped_a2(
-            grouped_model, task_head, val_loader, device, use_amp,
+            ssl_model, task_head, val_loader, device, use_amp,
             submission_level=submission_level,
         )
         val_labels_int = val_labels.astype(int)
@@ -771,7 +880,7 @@ def postTrain():
             )
 
             pids, sessions, preds = generate_submission_grouped(
-                grouped_model, task_head, loader, device, task, use_amp,
+                ssl_model, task_head, loader, device, task, use_amp,
                 desc=f"Submit {split_name}",
                 submission_level=submission_level,
                 a1_biases=a1_biases,
@@ -816,23 +925,23 @@ def postTrain():
 
             if filtered_preds:
                 preds = np.asarray(filtered_preds)
-            elif task == "a1":
+            elif task == "ssl_posttrain_a1":
                 preds = np.zeros((0, 3), dtype=np.float32)
-            else:
+            elif task == "ssl_posttrain_a2":
                 preds = np.zeros((0, 21), dtype=np.int64)
             if len(file_ids) != expected_rows:
                 log.warning(
                     f"Submission row count mismatch for {split_name}: expected={expected_rows} generated={len(file_ids)}"
                 )
 
-            if task == "a1":
+            if task == "ssl_posttrain_a1":
                 sub = pd.DataFrame({
                     "file_id": file_ids,
                     "p_D": preds[:, 0],
                     "p_A": preds[:, 1],
                     "p_S": preds[:, 2],
                 })
-            else:
+            elif task == "ssl_posttrain_a2":
                 item_cols = [f"d{i:02d}" for i in range(1, 22)]
                 sub = pd.DataFrame({"file_id": file_ids})
                 for j, col in enumerate(item_cols):

@@ -210,6 +210,8 @@ class PostTrainModel(nn.Module):
         self,
         backbone: TwinTowerBackbone,
         d_shared: int,
+        d_low: int,
+        d_high: int,
         aggregator_method: str = "mlp",
         dropout: float = 0.2,
     ):
@@ -220,7 +222,7 @@ class PostTrainModel(nn.Module):
             method=aggregator_method, dropout=dropout,
         )
         self.fusion = nn.Linear(d_shared, 3)
-        self.session_type_head = SessionTypeClassifier(d_in=d_shared)
+        self.session_type_head = SessionTypeClassifier(d_in=(d_low + d_high) * 2)
 
 
     def forward(
@@ -232,11 +234,11 @@ class PostTrainModel(nn.Module):
 
         a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)
         B = n_participants
-        session_reprs = torch.cat([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=-1)
+        session_reprs = torch.cat([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=-1)  # B*4, lowdim*2 + highdim*2
 
-        session_grid = session_reprs.view(B, 4, -1)
+        session_grid = session_reprs.view(B, 4, -1)  # B, 4, dim
 
-        participant_repr = session_grid.aggregator(session_grid, session_valid) 
+        participant_repr = self.aggregator(session_grid, session_valid) 
 
         session_type_logits = self.session_type_head(participant_repr).squeeze(-1)
 

@@ -48,7 +48,7 @@ class _RealtimeFileHandler(logging.FileHandler):
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2", "ssl_pretrain", "ssl_posttrain"])
+    p.add_argument("--task", type=str, required=True, default="a1", choices=["a1", "a2", "ssl_pretrain", "ssl_posttrain_a1", "ssl_posttrain_a2"])
     p.add_argument("--config", type=str, default="tasks/a1/default.yaml")
 
     p.add_argument("--feature_root", type=str, default=None)
@@ -65,6 +65,8 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--d_adapter", type=int, default=None)
     p.add_argument("--d_model", type=int, default=None)
+    p.add_argument("--d_low", type=int, default=None)
+    p.add_argument("--d_high", type=int, default=None)
     p.add_argument("--tcn_layers", type=int, default=None)
     p.add_argument("--tcn_kernel_size", type=int, default=None)
     p.add_argument("--asp_alpha", type=float, default=None)
@@ -72,6 +74,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dropout", type=float, default=None)
     p.add_argument("--d_shared", type=int, default=None)
 
+    p.add_argument("--temporal_conv", type=str, default=None)
     p.add_argument("--aggregator", type=str, default=None, choices=["mean", "mlp", "attention"])
     p.add_argument("--session_loss_weight", type=float, default=None)
     p.add_argument("--session_type_loss_weight", type=float, default=None)
