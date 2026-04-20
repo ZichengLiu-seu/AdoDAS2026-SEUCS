@@ -37,13 +37,13 @@ dropout: 0.3
 d_shared: 128  # 256
 
 temporal_conv: TwinTower
-aggregator: mean
+aggregator: mlp
 batch_size: 64
-lr: 0.01
+lr: 0.001
 weight_decay: 0.01
 multistep: false
 warmup_epochs: 2
-epochs: 15
+epochs: 10
 seed: 42
 num_workers: 8
 amp: true

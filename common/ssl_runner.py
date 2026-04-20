@@ -30,7 +30,7 @@ from .runner import parse_args, load_config, seed_everything, build_run_name, se
     generate_submission_grouped
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
-from .models.grouped_model import GroupedModel, SelfSupervisedModel, PostTrainModel, CORALHead
+from .models.grouped_model import GroupedModel, PreTrainModel, PostTrainModel, CORALHead
 from .models.mtcn_backbone import MTCNBackbone, BackboneConfig
 from .models.my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
 from .models.heads import contrastive_loss, supcon_loss, a1_loss, a2_ordinal_loss, A1Head, A2OrdinalHead
@@ -40,7 +40,7 @@ from .utils.run_metadata import RunMetadata
 
 
 def pretrain_one_epoch(
-    ssl_model: SelfSupervisedModel,
+    ssl_model: PreTrainModel,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
@@ -127,7 +127,7 @@ def pretrain_one_epoch(
 
 
 def posttrain_one_epoch(
-    ssl_model: SelfSupervisedModel,
+    ssl_model: PostTrainModel,
     task_head: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
@@ -238,7 +238,7 @@ def posttrain_one_epoch(
 
 
 def validate(
-    ssl_model: SelfSupervisedModel,
+    ssl_model: PreTrainModel,
     loader: DataLoader,
     device: torch.device,
     task: str,
@@ -388,12 +388,7 @@ def preTrain():
         log.error(f"pretrained do not needed in this model")
         
 
-    ssl_model = SelfSupervisedModel(
-        backbone=backbone,
-        d_shared=bb_cfg.d_shared,
-        aggregator_method=cfg.get("aggregator", "mlp"),
-        dropout=cfg.get("dropout", 0.2),
-    ).to(device)
+    ssl_model = PreTrainModel(backbone=backbone).to(device)
 
     n_params = sum(p.numel() for p in ssl_model.parameters())
     log.info(f"Model params: {n_params:,}")
@@ -482,7 +477,7 @@ def preTrain():
             best_metric = primary
             save_checkpoint(
                 run_dirs["checkpoints"] / "best.pt",
-                ssl_model, optimizer, epoch, best_metric,
+                ssl_model.backbone, optimizer, epoch, best_metric,
             )
             log.info(f"  >>> New best {metric_name}={best_metric:.4f} saved at epoch {epoch}.")
             meta.update_best(epoch, val_loss)

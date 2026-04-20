@@ -156,24 +156,14 @@ class CORALHead(nn.Module):
         return E.round().long().clamp(0, 3)
 
 
-class SelfSupervisedModel(nn.Module):
+class PreTrainModel(nn.Module):
 
     def __init__(
         self,
         backbone: TwinTowerBackbone,
-        d_shared: int,
-        aggregator_method: str = "mlp",
-        dropout: float = 0.2,
     ):
         super().__init__()
         self.backbone = backbone        
-        self.aggregator = ParticipantAggregator(
-            d_in=d_shared, d_out=d_shared,
-            method=aggregator_method, dropout=dropout,
-        )
-        self.contrastive_proj = nn.Sequential(
-            nn.Linear(d_shared, d_shared),
-        )
 
     def forward(
         self,
@@ -183,18 +173,6 @@ class SelfSupervisedModel(nn.Module):
     ) -> dict[str, torch.Tensor]:
 
         a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)  # B*4, T, dim --> B#4, dim
-        B = n_participants
-        # a_low_grid = a_low_repr.view(B, 4, -1)  # B, 4, T*dim
-        # v_low_grid = v_low_repr.view(B, 4, -1) 
-        # a_high_grid = a_high_repr.view(B, 4, -1)
-        # v_high_grid = v_high_repr.view(B, 4, -1)
-
-        # a_low_part_repr = self.aggregator(a_low_grid, session_valid)
-        # v_low_part_repr = self.aggregator(v_low_grid, session_valid)
-        # a_high_part_repr = self.aggregator(a_high_grid, session_valid)
-        # v_high_part_repr = self.aggregator(v_high_grid, session_valid)
-
-        # contrastive_repr = self.contrastive_proj(participant_repr)
 
         return {
             "a_low_repr": a_low_repr,
