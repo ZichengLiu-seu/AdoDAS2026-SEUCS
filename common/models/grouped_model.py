@@ -220,8 +220,8 @@ class PostTrainModel(nn.Module):
             d_in=d_shared, d_out=d_shared,
             method=aggregator_method, dropout=dropout,
         )
-        self.fusion = nn.Linear(d_shared, 3)
-        self.session_type_head = SessionTypeClassifier(d_in=d_backbone_out)
+        self.proj = nn.Linear(d_backbone_out, d_shared)
+        self.session_type_head = SessionTypeClassifier(d_in=d_shared)
 
 
     def forward(
@@ -234,6 +234,7 @@ class PostTrainModel(nn.Module):
         a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)
         B = n_participants
         session_reprs = torch.cat([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=-1)  # B*4, lowdim*2 + highdim*2
+        session_reprs = self.proj(session_reprs)
 
         session_grid = session_reprs.view(B, 4, -1)  # B, 4, dim
 

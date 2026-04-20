@@ -33,7 +33,7 @@ from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.grouped_model import GroupedModel, SelfSupervisedModel, PostTrainModel, CORALHead
 from .models.mtcn_backbone import MTCNBackbone, BackboneConfig
 from .models.my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
-from .models.heads import contrastive_loss, a1_loss, a2_ordinal_loss, A1Head, A2OrdinalHead
+from .models.heads import contrastive_loss, supcon_loss, a1_loss, a2_ordinal_loss, A1Head, A2OrdinalHead
 from .utils.ckpt import save_checkpoint, load_checkpoint
 from .utils.run_naming import build_run_name, setup_run_dirs
 from .utils.run_metadata import RunMetadata
@@ -63,7 +63,8 @@ def pretrain_one_epoch(
         desc += f" [best={best_metric:.4f}]"
     pbar = tqdm(loader, desc=desc, leave=False, dynamic_ncols=True)
 
-    contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
+    # contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
+    contraLoss = supcon_loss()
     for batch in pbar:
         flat_batch = _to_device(batch["flat_batch"], device)
         session_valid = batch["session_valid"].to(device)
@@ -79,14 +80,17 @@ def pretrain_one_epoch(
                     ) * feature_noise_std * noise_mask
 
         # targets = torch.tensor(batch["flat_pids"]).to(device)
+        targets = batch["participant_y_a1"].to(device)
 
         with torch.amp.autocast("cuda", enabled=use_amp, dtype=torch.bfloat16):
             out = ssl_model(flat_batch, B, session_valid)
             valid_session_mask = _flatten_valid_session_mask(session_valid)
             has_valid_sessions = bool(valid_session_mask.any().item())
 
-            low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"])
-            high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])
+            # low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"])
+            # high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])            
+            low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"], targets)
+            high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"], targets)
 
             if adaptive_loss_weight is not None:
                 weights = adaptive_loss_weight()
@@ -249,19 +253,23 @@ def validate(
     all_labels = []
     all_logits = []
     all_sess_preds = []
-    contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
+    # contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
+    contraLoss = supcon_loss()
 
     for batch in tqdm(loader, desc=f"Val {epoch}/{epochs}", leave=False, dynamic_ncols=True):
         flat_batch = _to_device(batch["flat_batch"], device)
         session_valid = batch["session_valid"].to(device)
         B = batch["n_participants"]
+        targets = batch["participant_y_a1"].to(device)
 
         with torch.amp.autocast("cuda", enabled=use_amp, dtype=torch.bfloat16):
             out = ssl_model(flat_batch, B, session_valid)
             valid_session_mask = _flatten_valid_session_mask(session_valid)
 
-            low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"])
-            high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])
+            # low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"])
+            # high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])
+            low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"], targets)
+            high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"], targets)
 
             if adaptive_loss_weight is not None:
                 weights = adaptive_loss_weight.get_weights()
@@ -606,7 +614,8 @@ def postTrain():
     use_coral = bool(cfg.get("use_coral", False))
     if task == "ssl_posttrain_a1":
         bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
-        task_head = A1Head(d_backbone_out, bias_init=bias_init).to(device)
+        # task_head = A1Head(d_backbone_out, bias_init=bias_init).to(device)
+        task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
     elif task == "ssl_posttrain_a2":
         if use_coral:
             task_head = CORALHead(d_backbone_out).to(device)

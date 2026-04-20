@@ -307,7 +307,7 @@ class DualTCNBackbone(nn.Module):
 
 # ========================================TwinTower-Related Modules========================================
 class GatedFusion(nn.Module):
-    def __init__(self, d_in: int, d_out: int) -> None:
+    def __init__(self) -> None:
         super().__init__()
 
     def forward(self, x: list) -> torch.Tensor:
@@ -324,28 +324,36 @@ class TwinTowerBackbone(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.audio_adapters = nn.ModuleDict({
-            name: GroupAdapter(d_in, cfg.d_adapter, cfg.dropout)
+            name: GroupAdapter(d_in, cfg.d_low, cfg.dropout)
             for name, d_in in cfg.audio_group_dims.items() if name != "ssl_embed"
         })
         self.audio_pooled_adapters = nn.ModuleDict({
             name: nn.Sequential(
                 nn.LayerNorm(d_in),
-                nn.Linear(d_in, cfg.d_adapter),
+                nn.Linear(d_in, cfg.d_low),
                 nn.GELU(),
                 nn.Dropout(cfg.dropout),
             )
             for name, d_in in cfg.audio_pooled_group_dims.items()
         })
         self.video_adapters = nn.ModuleDict({
-            name: GroupAdapter(d_in, cfg.d_adapter, cfg.dropout)
+            name: GroupAdapter(d_in, cfg.d_low, cfg.dropout)
             for name, d_in in cfg.video_group_dims.items() if name != "vision_ssl_embed"
         })
         self.audio_group_names = sorted(cfg.audio_group_dims.keys())
         self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
         self.video_group_names = sorted(cfg.video_group_dims.keys())
 
-        self.audio_gated_fusion = GatedFusion(cfg.d_adapter, cfg.d_low)
-        self.video_gated_fusion = GatedFusion(cfg.d_adapter, cfg.d_low)
+        # self.audio_gated_fusion = GatedFusion()
+        # self.video_gated_fusion = GatedFusion()
+        self.audio_fusion = ModalityFusion(
+            len(self.audio_group_names) - 1, cfg.d_low, cfg.d_low,
+        )
+        self.video_fusion = ModalityFusion(
+            len(self.video_group_names) - 1, cfg.d_low, cfg.d_low,
+        )
+        self.audio_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        self.video_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
 
 
         self.audio_ssl_proj = nn.Linear(cfg.audio_group_dims["ssl_embed"], cfg.d_high)
@@ -362,8 +370,16 @@ class TwinTowerBackbone(nn.Module):
             for n in self.video_group_names if n != "vision_ssl_embed"
         ]
         # TODO: add pooled adapters
-        a_low_repr = self.audio_gated_fusion(audio_adapted)
-        v_low_repr = self.video_gated_fusion(video_adapted)
+        # a_low_repr = self.audio_gated_fusion(audio_adapted)
+        # v_low_repr = self.video_gated_fusion(video_adapted)
+        a_low_fusion = self.audio_fusion(audio_adapted)
+        v_low_fusion = self.video_fusion(video_adapted)
+        mask_a = batch["mask_audio"]
+        mask_v = batch["mask_video"]
+        a = a_low_fusion * mask_a.unsqueeze(-1).float()
+        v = v_low_fusion * mask_v.unsqueeze(-1).float()
+        a_low_repr = self.audio_tcn(a, mask_a)
+        v_low_repr = self.video_tcn(v, mask_v)
 
         a_high_repr = self.audio_ssl_proj(batch["audio_groups"]["ssl_embed"])
         v_high_repr = self.video_ssl_proj(batch["video_groups"]["vision_ssl_embed"])

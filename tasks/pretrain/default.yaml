@@ -28,7 +28,7 @@ d_adapter: 32
 d_model: 128  # 256
 d_low: 32
 d_high: 128
-tcn_layers: 6
+tcn_layers: 4
 tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
@@ -42,12 +42,12 @@ batch_size: 64
 lr: 0.005
 weight_decay: 0.01
 multistep: false
-warmup_epochs: 2
-epochs: 20
+warmup_epochs: 1
+epochs: 10
 seed: 42
 num_workers: 8
 amp: true
-preload: true
+preload: false
 grad_clip: 1.0
 use_pos_weight: true
 patience: 6
