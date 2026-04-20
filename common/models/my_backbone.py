@@ -384,15 +384,11 @@ class TwinTowerBackbone(nn.Module):
         a_high_repr = self.audio_ssl_proj(batch["audio_groups"]["ssl_embed"])
         v_high_repr = self.video_ssl_proj(batch["video_groups"]["vision_ssl_embed"])
 
-        # mask_a = batch["mask_audio"]
-        # mask_v = batch["mask_video"]
-        # a = a * mask_a.unsqueeze(-1).float()
-        # v = v * mask_v.unsqueeze(-1).float()
-
         return [a_low_repr.mean(dim=1), v_low_repr.mean(dim=1),
                  a_high_repr.mean(dim=1), v_high_repr.mean(dim=1)]
 
 
     def load_pretrained(self, pt_path: str, device: torch.device) -> None:
-        state_dict = torch.load(pt_path, map_location="cpu")
+        ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
+        state_dict = ckpt["model_state_dict"]
         self.load_state_dict(state_dict, strict=False)

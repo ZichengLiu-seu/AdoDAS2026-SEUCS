@@ -123,28 +123,28 @@ class contrastive_loss():
 
 
 class supcon_loss():
-    def __init__(self, temperature: float = 0.5):
+    def __init__(self, temperature: float = 0.1):
         super().__init__()
         self.temperature = temperature
         self.label_weights = [1.0, 1.0, 1.0]
 
     def __call__(self, a_repr: torch.Tensor, v_repr: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:        
-        N, _ = a_repr.shape    
         labels = labels.repeat_interleave(4, dim=0)
         
         a_norm = F.normalize(a_repr, dim=-1)
         v_norm = F.normalize(v_repr, dim=-1)
         similarity_matrix = torch.matmul(a_norm, v_norm.T) / self.temperature
-
         total_loss = 0.0
         for dim_idx in range(labels.shape[1]):
             label_dim = labels[:, dim_idx]
-            label_sim = torch.matmul(label_dim.unsqueeze(1), label_dim.unsqueeze(0)) 
-            label_sim = (label_sim + 1) / 2 
-            logits = similarity_matrix - torch.logsumexp(similarity_matrix, dim=1, keepdim=True)
-            weighted_logits = logits * label_sim.float()
-            pos_logits = torch.diag(weighted_logits)
-            loss_dim = -pos_logits.mean()            
-            total_loss += loss_dim * self.label_weights[dim_idx]
+            label_sim = torch.eq(label_dim.unsqueeze(1), label_dim.unsqueeze(0)).float()
+
+            exp_sim = torch.exp(similarity_matrix)
+            numerator = (exp_sim * label_sim).sum(dim=1)
+            denominator = exp_sim.sum(dim=1)
+            
+            loss_dim = -torch.log(numerator / (denominator + 1e-8) + 1e-8).mean()   
+            total_loss += loss_dim  # * self.label_weights[dim_idx]
+            # print(f"[DEBUG] loss_dim: {loss_dim:.4f}")
         
-        return total_loss
+        return total_loss / labels.shape[1]

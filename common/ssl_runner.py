@@ -91,6 +91,8 @@ def pretrain_one_epoch(
             # high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])            
             low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"], targets)
             high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"], targets)
+            # print(f"[DEBUG] low_part_contrastive_loss: {low_part_contrastive_loss:.4f}")
+            # print(f"[DEBUG] high_part_contrastive_loss: {high_part_contrastive_loss:.4f}")
 
             if adaptive_loss_weight is not None:
                 weights = adaptive_loss_weight()
@@ -103,7 +105,7 @@ def pretrain_one_epoch(
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(
-                list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters()),
+                list(ssl_model.parameters()), # + list(adaptive_loss_weight.parameters()),
                 max_norm=grad_clip,
             )
             scaler.step(optimizer)
@@ -111,7 +113,7 @@ def pretrain_one_epoch(
         else:
             loss.backward()
             nn.utils.clip_grad_norm_(
-                list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters()),    
+                list(ssl_model.parameters()), #  + list(adaptive_loss_weight.parameters()),    
                 max_norm=grad_clip,
             )
             optimizer.step()
@@ -246,7 +248,8 @@ def validate(
     adaptive_loss_weight: AdaptiveLossWeight | None = None,
 ):
     ssl_model.eval()
-    adaptive_loss_weight.eval()
+    if adaptive_loss_weight is not None:
+        adaptive_loss_weight.eval()
     total_loss = 0.0
     n_batches = 0
     all_preds = []
@@ -450,12 +453,12 @@ def preTrain():
             grad_clip=grad_clip,
             best_metric=best_metric,
             feature_noise_std=feature_noise_std,
-            adaptive_loss_weight=adaptive_loss_weight,
+            adaptive_loss_weight=None,
         )
         val_loss = validate(
             ssl_model, val_loader, device,
             task, epoch, epochs, use_amp,
-            adaptive_loss_weight,
+            adaptive_loss_weight=None,
         )
         scheduler.step()
 

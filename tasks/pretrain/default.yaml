@@ -28,7 +28,7 @@ d_adapter: 32
 d_model: 128  # 256
 d_low: 32
 d_high: 128
-tcn_layers: 4
+tcn_layers: 6
 tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
@@ -39,15 +39,15 @@ d_shared: 128  # 256
 temporal_conv: TwinTower
 aggregator: mean
 batch_size: 64
-lr: 0.005
+lr: 0.01
 weight_decay: 0.01
 multistep: false
-warmup_epochs: 1
-epochs: 10
+warmup_epochs: 2
+epochs: 20
 seed: 42
 num_workers: 8
 amp: true
-preload: false
+preload: true
 grad_clip: 1.0
 use_pos_weight: true
 patience: 6
