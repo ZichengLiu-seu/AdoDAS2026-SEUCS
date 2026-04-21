@@ -9,12 +9,12 @@ class A1Head(nn.Module):
 
     def __init__(self, d_in: int, bias_init: list[float] | None = None) -> None:
         super().__init__()
-        self.fc = nn.Linear(d_in, 3)
-        # self.fc = nn.Sequential(
-        #     nn.Linear(d_in, d_in // 2),
-        #     nn.GELU(),
-        #     nn.Linear(d_in // 2, 3),
-        # )
+        # self.fc = nn.Linear(d_in, 3)
+        self.fc = nn.Sequential(
+            nn.Linear(d_in, d_in // 2),
+            nn.GELU(),
+            nn.Linear(d_in // 2, 3),
+        )
         if bias_init is not None:
             with torch.no_grad():
                 self.fc.bias.copy_(torch.tensor(bias_init, dtype=torch.float32))
@@ -25,6 +25,29 @@ class A1Head(nn.Module):
 
     @staticmethod
     def predict_probs(logits: torch.Tensor) -> torch.Tensor:
+        return torch.sigmoid(logits)
+
+
+class A1SpecificHead(nn.Module):
+    def __init__(self, d_in: int, bias_init: list[float] | None = None) -> None:
+        super().__init__()
+        self.fcs = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_in, d_in // 2),
+                nn.GELU(),
+                nn.Linear(d_in // 2, 1),
+            ) for _ in range(3)
+        ])
+        if bias_init is not None:
+            with torch.no_grad():
+                for i, fc in enumerate(self.fcs):
+                    fc[-1].bias.copy_(torch.tensor(bias_init[i], dtype=torch.float32))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.cat([fc(x) for fc in self.fcs], dim=-1)
+
+    @staticmethod
+    def predict_probs(self, logits: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(logits)
 
 
@@ -109,7 +132,7 @@ class contrastive_loss():
         self.mask = torch.eq(row_group, col_group).float().to(device)
         self.temperature = temperature
 
-    def __call__(self, a_repr, v_repr) -> torch.Tensor:
+    def __call__(self, a_repr, v_repr, labels: torch.Tensor) -> torch.Tensor:
         N, _ = a_repr.shape
         a_norm = F.normalize(a_repr, dim=-1)
         v_norm = F.normalize(v_repr, dim=-1)

@@ -33,7 +33,7 @@ from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.grouped_model import GroupedModel, PreTrainModel, PostTrainModel, CORALHead
 from .models.mtcn_backbone import MTCNBackbone, BackboneConfig
 from .models.my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
-from .models.heads import contrastive_loss, supcon_loss, a1_loss, a2_ordinal_loss, A1Head, A2OrdinalHead
+from .models.heads import contrastive_loss, supcon_loss, a1_loss, a2_ordinal_loss, A1Head, A1SpecificHead, A2OrdinalHead
 from .utils.ckpt import save_checkpoint, load_checkpoint
 from .utils.run_naming import build_run_name, setup_run_dirs
 from .utils.run_metadata import RunMetadata
@@ -63,8 +63,8 @@ def pretrain_one_epoch(
         desc += f" [best={best_metric:.4f}]"
     pbar = tqdm(loader, desc=desc, leave=False, dynamic_ncols=True)
 
-    # contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
-    contraLoss = supcon_loss()
+    contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
+    # contraLoss = supcon_loss()
     for batch in pbar:
         flat_batch = _to_device(batch["flat_batch"], device)
         session_valid = batch["session_valid"].to(device)
@@ -86,13 +86,9 @@ def pretrain_one_epoch(
             out = ssl_model(flat_batch, B, session_valid)
             valid_session_mask = _flatten_valid_session_mask(session_valid)
             has_valid_sessions = bool(valid_session_mask.any().item())
-
-            # low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"])
-            # high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])            
+   
             low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"], targets)
             high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"], targets)
-            # print(f"[DEBUG] low_part_contrastive_loss: {low_part_contrastive_loss:.4f}")
-            # print(f"[DEBUG] high_part_contrastive_loss: {high_part_contrastive_loss:.4f}")
 
             if adaptive_loss_weight is not None:
                 weights = adaptive_loss_weight()
@@ -237,7 +233,7 @@ def posttrain_one_epoch(
     return total_loss / max(n_batches, 1)
 
 
-def validate(
+def pretrain_validate(
     ssl_model: PreTrainModel,
     loader: DataLoader,
     device: torch.device,
@@ -256,8 +252,8 @@ def validate(
     all_labels = []
     all_logits = []
     all_sess_preds = []
-    # contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
-    contraLoss = supcon_loss()
+    contraLoss = contrastive_loss(N=loader.batch_size*4, device=device)
+    # contraLoss = supcon_loss()
 
     for batch in tqdm(loader, desc=f"Val {epoch}/{epochs}", leave=False, dynamic_ncols=True):
         flat_batch = _to_device(batch["flat_batch"], device)
@@ -269,8 +265,6 @@ def validate(
             out = ssl_model(flat_batch, B, session_valid)
             valid_session_mask = _flatten_valid_session_mask(session_valid)
 
-            # low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"])
-            # high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"])
             low_part_contrastive_loss = contraLoss(out["a_low_repr"], out["v_low_repr"], targets)
             high_part_contrastive_loss = contraLoss(out["a_high_repr"], out["v_high_repr"], targets)
 
@@ -401,7 +395,7 @@ def preTrain():
     grad_clip = cfg.get("grad_clip", 1.0)
 
     adaptive_loss_weight = AdaptiveLossWeight(initial_weights=[1, 1], device=device)
-    params = list(ssl_model.parameters())
+    params = list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters())
     optimizer = torch.optim.AdamW(
         params, lr=cfg.get("lr", 1e-3), weight_decay=cfg.get("weight_decay", 1e-2)
     )
@@ -448,12 +442,12 @@ def preTrain():
             grad_clip=grad_clip,
             best_metric=best_metric,
             feature_noise_std=feature_noise_std,
-            adaptive_loss_weight=None,
+            adaptive_loss_weight=adaptive_loss_weight,
         )
-        val_loss = validate(
+        val_loss = pretrain_validate(
             ssl_model, val_loader, device,
             task, epoch, epochs, use_amp,
-            adaptive_loss_weight=None,
+            adaptive_loss_weight=adaptive_loss_weight,
         )
         scheduler.step()
 
@@ -600,7 +594,8 @@ def postTrain():
 
     d_low=cfg.get("d_low", 32)
     d_high=cfg.get("d_high", 128)
-    d_backbone_out = (d_low + d_high) * 2
+    d_backbone_out = (d_low + d_high)  #  * 2
+    print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
     ssl_model = PostTrainModel(
         backbone=backbone,
         d_shared=bb_cfg.d_shared,
@@ -613,7 +608,8 @@ def postTrain():
     if task == "ssl_posttrain_a1":
         bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
         # task_head = A1Head(d_backbone_out, bias_init=bias_init).to(device)
-        task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
+        # task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
+        task_head = A1SpecificHead(bb_cfg.d_shared, bias_init=bias_init).to(device)
     elif task == "ssl_posttrain_a2":
         if use_coral:
             task_head = CORALHead(d_backbone_out).to(device)

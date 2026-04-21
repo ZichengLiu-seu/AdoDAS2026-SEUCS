@@ -42,7 +42,7 @@ warmup_epochs: 1
 epochs: 50
 seed: 42
 num_workers: 8
-amp: true
+amp: false
 preload: true
 grad_clip: 1.0
 use_pos_weight: true

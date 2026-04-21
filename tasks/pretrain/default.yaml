@@ -10,10 +10,10 @@ feature_selection:
     - ssl_embed
   video_features:
     - headpose_geom
-    # - face_behavior
+    - face_behavior
     - qc_stats
     - vad_agg
-    # - body_pose
+    - body_pose
     - global_motion
     - vision_ssl_embed
   audio_ssl_model_tag: wav2vec2-chinese-xlsr
@@ -25,19 +25,19 @@ core_audio: [mel_mfcc, ssl_embed]
 core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 32
-d_model: 128  # 256
-d_low: 32
-d_high: 128
+d_model: 256
+d_low: 128
+d_high: 512
 tcn_layers: 6
 tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
 asp_beta: 0.5
 dropout: 0.3
-d_shared: 128  # 256
+d_shared: 256
 
 temporal_conv: TwinTower
-aggregator: mlp
+aggregator: attention
 batch_size: 64
 lr: 0.001
 weight_decay: 0.01
@@ -46,8 +46,8 @@ warmup_epochs: 2
 epochs: 10
 seed: 42
 num_workers: 8
-amp: true
-preload: true
+amp: false
+preload: false
 grad_clip: 1.0
 use_pos_weight: true
 patience: 6
@@ -55,7 +55,7 @@ session_loss_weight: 0.2
 session_type_loss_weight: 0.15
 submission_level: participant
 decode_method: auto
-label_smoothing: 0.0
-feature_noise_std: 0.0
+label_smoothing: 0.3
+feature_noise_std: 0.2
 session_drop_prob: 0.0
 early_stop_metric: val_loss

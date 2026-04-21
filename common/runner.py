@@ -24,7 +24,7 @@ from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.mtcn_backbone import BackboneConfig, MTCNBackbone
 from .models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone
-from .models.heads import A1Head, A2OrdinalHead, a1_loss, a2_ordinal_loss
+from .models.heads import A1Head, A1SpecificHead, A2OrdinalHead, a1_loss, a2_ordinal_loss
 from .models.grouped_model import GroupedModel, CORALHead
 from .utils.seed import seed_everything
 from .utils.metrics import binary_f1, macro_auroc, per_class_f1, mean_qwk, mean_mae, per_item_qwk
@@ -923,7 +923,8 @@ def main() -> None:
     use_coral = bool(cfg.get("use_coral", False))
     if task == "a1":
         bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
-        task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
+        # task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
+        task_head = A1SpecificHead(bb_cfg.d_shared, bias_init=bias_init).to(device)
     else:
         if use_coral:
             task_head = CORALHead(bb_cfg.d_shared).to(device)

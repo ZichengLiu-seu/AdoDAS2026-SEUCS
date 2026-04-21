@@ -25,17 +25,17 @@ core_audio: [mel_mfcc, ssl_embed]
 core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 32
-d_model: 128  # 256
+d_model: 256
 tcn_layers: 6
 tcn_kernel_size: 3
 n_heads: 4
 asp_alpha: 0.5
 asp_beta: 0.5
 dropout: 0.3
-d_shared: 128  # 256
+d_shared: 256
 
 temporal_conv: DualTCN
-aggregator: mean
+aggregator: mlp
 batch_size: 64
 lr: 0.001
 weight_decay: 0.01
@@ -44,7 +44,7 @@ warmup_epochs: 5
 epochs: 20
 seed: 42
 num_workers: 8
-amp: true
+amp: false
 preload: false
 grad_clip: 1.0
 use_pos_weight: true
