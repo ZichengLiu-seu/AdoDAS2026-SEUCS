@@ -8,13 +8,14 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
+from transformers import RobertaTokenizer
 from tqdm import tqdm
 
 from .dataset import (
     SESSIONS, SESSION_TO_IDX, ITEM_COLS, A1_COLS,
     FeatureConfig, align_to_grid,
 )
-from .feature_io import SequenceData, load_egemaps_pooled, load_sequence
+from .feature_io import SequenceData, load_egemaps_pooled, load_sequence, load_transcript
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ class GroupedParticipantDataset(Dataset):
         self._feature_dims: dict[str, int] | None = None
         self._cache: list[dict | None] | None = None
 
+        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+
     @property
     def feature_dims(self) -> dict[str, int]:
         if self._feature_dims is None:
@@ -99,6 +102,7 @@ class GroupedParticipantDataset(Dataset):
             elif feat_name == "vision_ssl_embed":
                 tag = cfg.video_ssl_model_tag
             try:
+                # TODO: loading auxiliary attributes
                 seq = load_sequence(
                     self.root, self.split,
                     str(row["anon_school"]), str(row["anon_class"]), str(row["anon_pid"]),
@@ -111,8 +115,23 @@ class GroupedParticipantDataset(Dataset):
                 pass
         return groups
 
+    def _load_text(self, row) -> dict[str, SequenceData]:
+        cfg = self.cfg
+        groups: dict[str, SequenceData] = {}
+        try:
+            txt = load_transcript(
+                self.root, self.split,
+                str(row["anon_school"]), str(row["anon_class"]), str(row["anon_pid"]),
+                str(row["session"]),
+            )
+            groups["text_token_ids"] = self.tokenizer(txt, return_tensors="pt")
+        except FileNotFoundError:
+            # print(f"DEBUG: file not found")
+            pass
+        return groups
+
     def _compute_modality_mask(
-        self, mask_parts, mask_names, core_names, policy, T
+        self, mask_parts, mask_names, policy, T
     ) -> np.ndarray:
         if not mask_parts:
             return np.zeros(T, dtype=bool)
@@ -135,6 +154,7 @@ class GroupedParticipantDataset(Dataset):
         try:
             audio_raw = self._load_raw_groups(row, "audio")
             video_raw = self._load_raw_groups(row, "video")
+            text_raw = self._load_text(row)
 
             all_groups = {}
             for k, v in audio_raw.items():
@@ -223,6 +243,7 @@ class GroupedParticipantDataset(Dataset):
                 "session_idx": session_idx,
                 "seq_len": T,
                 "session": str(row["session"]),
+                "text_token_ids": None,
             }
         except Exception as e:
             log.debug(f"Failed to load session {row.get('session', '?')} for {row.get('anon_pid', '?')}: {e}")

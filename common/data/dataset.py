@@ -350,6 +350,7 @@ class MultimodalDataset(Dataset):
             "qc_quality": torch.from_numpy(qc_quality),
             "audio_pooled_present": pooled_presence,
             "session_idx": session_idx,
+            "text_token_ids": None,
             "y_a1": torch.from_numpy(y_a1),
             "y_a2": torch.from_numpy(y_a2),
             "seq_len": T,

@@ -36,7 +36,7 @@ def load_sequence(
     # print(f"DEBUG: seq_path {seq_path}")
 
     if not seq_path.exists():
-        print(f"DEBUG: seq_path not exist")
+        # print(f"DEBUG: seq_path not exist")
         raise FileNotFoundError(f"Missing sequence file: {seq_path}")
 
     data = np.load(str(seq_path), allow_pickle=True)
@@ -118,6 +118,27 @@ def load_egemaps_pooled(
             pass
 
     return None
+
+
+def load_transcript(
+    root: Path,
+    split: str,
+    anon_school: str,
+    anon_class: str,
+    anon_pid: str,
+    feature_set: str,
+    session: str,
+) -> np.ndarray | None:
+    parts = [root, split, anon_school, anon_class, anon_pid, session]
+    trainscript_path = Path(*[str(p) for p in parts]) / "normalized_transcript.txt"
+    
+    if not trainscript_path.exists():
+        raise FileNotFoundError(f"Missing transcript file: {trainscript_path}")
+    
+    with open(trainscript_path, "r") as f:
+        lines = f.readlines()
+    print(f"DEBUG: reading txt : {lines}")
+    return np.array(lines, dtype=np.float32)
 
 
 def discover_feature_sets(

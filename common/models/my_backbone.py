@@ -392,3 +392,244 @@ class TwinTowerBackbone(nn.Module):
         ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
         state_dict = ckpt["model_state_dict"]
         self.load_state_dict(state_dict, strict=False)
+
+# ========================================V-T-A Modules==================================================
+class TriModalConfig:
+    audio_group_dims: dict[str, int] = field(default_factory=dict)
+    audio_pooled_group_dims: dict[str, int] = field(default_factory=dict)
+    video_group_dims: dict[str, int] = field(default_factory=dict)
+
+    d_adapter: int = 64
+    d_model: int = 256
+    d_text: int = 256
+    d_low: int = 32
+    d_high: int = 128
+
+    tcn_layers: int = 4
+    tcn_kernel_size: int = 3
+    n_heads: int = 4
+
+    asp_alpha: float = 0.5
+    asp_beta: float = 0.5
+
+    dropout: float = 0.1
+
+    n_sessions: int = 4
+    d_session: int = 16
+    d_shared: int = 256
+
+    vocab_size: int = 30000
+    max_seq_len: int = 512
+    d_text_embed: int = 128
+    text_encoder_layers: int = 2
+    use_pretrained_text: bool = False
+    text_model_name: str = "bert-base-uncased"
+
+
+class TextEncoder(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        d_embed: int,
+        d_model: int,
+        n_layers: int,
+        n_heads: int,
+        d_ff: int,
+        dropout: float,
+        max_seq_len: int = 512,
+    ) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.embedding = nn.Embedding(vocab_size, d_embed)
+        self.pos_embedding = nn.Embedding(max_seq_len, d_embed)
+        self.input_proj = nn.Linear(d_embed, d_model)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.pooling = nn.Linear(d_model, 1)
+
+    def forward(self, token_ids: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        B, T = token_ids.shape
+        positions = torch.arange(T, device=token_ids.device).unsqueeze(0).expand_as(token_ids)
+
+        x = self.embedding(token_ids) + self.pos_embedding(positions)
+        x = self.input_proj(x)
+
+        if mask is not None:
+            key_padding_mask = ~mask
+        else:
+            key_padding_mask = torch.zeros(B, T, dtype=torch.bool, device=token_ids.device)
+
+        x = self.transformer(x, src_key_padding_mask=key_padding_mask)
+
+        attn_weights = torch.softmax(self.pooling(x).squeeze(-1), dim=-1)
+        if mask is not None:
+            attn_weights = attn_weights.masked_fill(~mask, 0.0)
+        text_repr = (x * attn_weights.unsqueeze(-1)).sum(dim=1)
+
+        return text_repr
+
+
+class TextQueryCrossAttention(nn.Module):
+    def __init__(
+        self,
+        d_text: int,
+        d_modality: int,
+        d_model: int,
+        n_heads: int,
+        dropout: float,
+    ) -> None:
+        super().__init__()
+        self.text_proj = nn.Linear(d_text, d_model)
+        self.modality_proj = nn.Linear(d_modality, d_model)
+        self.cross_attn = nn.MultiheadAttention(
+            d_model, num_heads=n_heads, dropout=dropout, batch_first=True
+        )
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(
+        self,
+        text_repr: torch.Tensor,
+        modality_features: torch.Tensor,
+        modality_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        text_proj = self.text_proj(text_repr).unsqueeze(1)
+        mod_proj = self.modality_proj(modality_features)
+
+        attended, _ = self.cross_attn(
+            query=text_proj,
+            key=mod_proj,
+            value=mod_proj,
+            key_padding_mask=modality_mask,
+        )
+        attended = attended.squeeze(1)
+        output = self.norm(text_proj.squeeze(1) + self.dropout(attended))
+        return output
+
+
+class TextCoreBackbone(nn.Module):
+    def __init__(self, cfg: TriModalConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+
+        self.text_encoder = TextEncoder(
+            vocab_size=cfg.vocab_size,
+            d_embed=cfg.d_text_embed,
+            d_model=cfg.d_text,
+            n_layers=cfg.text_encoder_layers,
+            n_heads=cfg.n_heads,
+            d_ff=cfg.d_text * 4,
+            dropout=cfg.dropout,
+            max_seq_len=cfg.max_seq_len,
+        )
+        self.text_to_audio_attn = TextQueryCrossAttention(
+            cfg.d_text, cfg.d_model, cfg.d_model, cfg.n_heads, cfg.dropout
+        )
+        self.text_to_video_attn = TextQueryCrossAttention(
+            cfg.d_text, cfg.d_model, cfg.d_model, cfg.n_heads, cfg.dropout
+        )
+
+        self.audio_adapters = nn.ModuleDict({
+            name: GroupAdapter(d_in, cfg.d_adapter, cfg.dropout)
+            for name, d_in in cfg.audio_group_dims.items()
+        })
+        self.audio_pooled_adapters = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.LayerNorm(d_in),
+                nn.Linear(d_in, cfg.d_adapter),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+            )
+            for name, d_in in cfg.audio_pooled_group_dims.items()
+        })
+        self.video_adapters = nn.ModuleDict({
+            name: GroupAdapter(d_in, cfg.d_adapter, cfg.dropout)
+            for name, d_in in cfg.video_group_dims.items()
+        })
+        self.audio_group_names = sorted(cfg.audio_group_dims.keys())
+        self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
+        self.video_group_names = sorted(cfg.video_group_dims.keys())
+
+        self.audio_fusion = ModalityFusion(
+            len(self.audio_group_names), cfg.d_adapter, cfg.d_model
+        )
+        self.video_fusion = ModalityFusion(
+            len(self.video_group_names), cfg.d_adapter, cfg.d_model
+        )
+
+        self.audio_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+
+        self.audio_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
+        self.video_asp = ASP(cfg.d_model, cfg.asp_alpha, cfg.asp_beta)
+
+        fusion_in = cfg.d_text
+        fusion_in += cfg.d_model * 2  
+        fusion_in += len(self.audio_pooled_group_names) * cfg.d_adapter
+        fusion_in += cfg.d_session 
+
+        self.session_embed = nn.Embedding(cfg.n_sessions, cfg.d_session)
+
+        self.fusion_mlp = nn.Sequential(
+            nn.Linear(fusion_in, cfg.d_shared),
+            nn.GELU(),
+            nn.Dropout(cfg.dropout),
+            nn.Linear(cfg.d_shared, cfg.d_shared),
+        )
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Embedding):
+                nn.init.normal_(m.weight, std=0.02)
+    
+    def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        text_token_ids = batch["text_token_ids"]
+        text_repr = self.text_encoder(text_token_ids)
+        audio_adapted = [
+            self.audio_adapters[n](batch["audio_groups"][n])
+            for n in self.audio_group_names
+        ]
+        video_adapted = [
+            self.video_adapters[n](batch["video_groups"][n])
+            for n in self.video_group_names
+        ]
+        a = self.audio_fusion(audio_adapted)
+        v = self.video_fusion(video_adapted)
+
+        mask_a = batch["mask_audio"]
+        mask_v = batch["mask_video"]
+        a = a * mask_a.unsqueeze(-1).float()
+        v = v * mask_v.unsqueeze(-1).float()
+
+        a = self.audio_tcn(a, mask_a)
+        v = self.video_tcn(v, mask_v)
+
+        # vad = batch["vad_signal"]
+        # qc = batch["qc_quality"]
+        # z_a = self.audio_asp(a, mask_a, vad, qc)
+        # z_v = self.video_asp(v, mask_v, vad, qc)
+        text_guided_audio = self.text_to_audio_attn(text_repr, a, mask_a)
+        text_guided_video = self.text_to_video_attn(text_repr, v, mask_v)
+
+        # parts = [text_repr, z_a, z_v, text_guided_audio, text_guided_video]
+        parts = [text_repr, text_guided_audio, text_guided_video]
+        parts.extend(
+            self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
+            for name in self.audio_pooled_group_names
+        )
+        parts.append(self.session_embed(batch["session_idx"]))
+        z = torch.cat(parts, dim=-1)
+        return self.fusion_mlp(z)

@@ -11,9 +11,9 @@ class A1Head(nn.Module):
         super().__init__()
         # self.fc = nn.Linear(d_in, 3)
         self.fc = nn.Sequential(
-            nn.Linear(d_in, d_in // 2),
+            nn.Linear(d_in, d_in),
             nn.GELU(),
-            nn.Linear(d_in // 2, 3),
+            nn.Linear(d_in, 3),
         )
         if bias_init is not None:
             with torch.no_grad():
@@ -33,9 +33,9 @@ class A1SpecificHead(nn.Module):
         super().__init__()
         self.fcs = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(d_in, d_in // 2),
+                nn.Linear(d_in, d_in),
                 nn.GELU(),
-                nn.Linear(d_in // 2, 1),
+                nn.Linear(d_in, 1),
             ) for _ in range(3)
         ])
         if bias_init is not None:

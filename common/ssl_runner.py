@@ -369,6 +369,8 @@ def preTrain():
             video_group_dims=video_group_dims,
             d_adapter=cfg.get("d_adapter", 64),
             d_model=cfg.get("d_model", 256),
+            d_low=cfg.get("d_low", 32),
+            d_high=cfg.get("d_high", 64),
             tcn_layers=cfg.get("tcn_layers", 6),
             tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
             n_heads=cfg.get("n_heads", 4),
@@ -539,7 +541,6 @@ def postTrain():
     val_ds = GroupedParticipantDataset(manifest_dir / "val.csv", feat_cfg, split="val")
 
     batch_size = cfg.get("batch_size", 64)
-    print(f"[DEBUG] batch_size type: {type(batch_size)}")
     num_workers = cfg.get("num_workers", 8)
     log.info(f"Train: {len(train_ds)} participants, Val: {len(val_ds)} participants")
 
@@ -581,6 +582,8 @@ def postTrain():
             video_group_dims=video_group_dims,
             d_adapter=cfg.get("d_adapter", 64),
             d_model=cfg.get("d_model", 256),
+            d_low=cfg.get("d_low", 32),
+            d_high=cfg.get("d_high", 64),
             tcn_layers=cfg.get("tcn_layers", 6),
             tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
             n_heads=cfg.get("n_heads", 4),
@@ -591,14 +594,15 @@ def postTrain():
         )
     backbone = TwinTowerBackbone(bb_cfg)
     backbone.load_pretrained(pt_path, device)
+    for param in backbone.parameters():
+        param.requires_grad = False
 
     d_low=cfg.get("d_low", 32)
     d_high=cfg.get("d_high", 128)
-    d_backbone_out = (d_low + d_high)  #  * 2
+    d_backbone_out = (d_low + d_high) * 2
     print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
     ssl_model = PostTrainModel(
         backbone=backbone,
-        d_shared=bb_cfg.d_shared,
         d_backbone_out=d_backbone_out,
         aggregator_method=cfg.get("aggregator", "mlp"),
         dropout=cfg.get("dropout", 0.2),
@@ -609,7 +613,7 @@ def postTrain():
         bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
         # task_head = A1Head(d_backbone_out, bias_init=bias_init).to(device)
         # task_head = A1Head(bb_cfg.d_shared, bias_init=bias_init).to(device)
-        task_head = A1SpecificHead(bb_cfg.d_shared, bias_init=bias_init).to(device)
+        task_head = A1SpecificHead(d_backbone_out, bias_init=bias_init).to(device)
     elif task == "ssl_posttrain_a2":
         if use_coral:
             task_head = CORALHead(d_backbone_out).to(device)
