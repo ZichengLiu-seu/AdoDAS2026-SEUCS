@@ -1235,7 +1235,7 @@ def analyze_feature_group(
     #     )
         # for rank_idx, tag in enumerate(top_features):
         #     feature_name = tag.split("_", 1)[1].rsplit(f"_S{session_name}", 1)[0]
-        #     # if rank_idx < functional_top_feature_count:
+        #     # if rank_idx < functional_top_feature_count: 
         #         # fpca_matrix, _ = build_functional_matrix(
         #         #     features_group[feature_name],
         #         #     masks_group[feature_name],
@@ -1330,14 +1330,6 @@ def main() -> None:
     video_group_dims = {name: dims[name] for name in feat_cfg.video_features if name in dims}
 
     # 提取并可视化特征
-<<<<<<< Updated upstream
-    target_session = 2
-    print("Extracting features...")
-    audio_features, labels = extract_features(train_ds, audio_group_dims, target_session, mode="audio")
-    visualize_features(audio_features, labels, modality_name="audio", session_name=target_session)    
-    video_features, labels = extract_features(train_ds, video_group_dims, target_session, mode="video")
-    visualize_features(video_features, labels, modality_name="video", session_name=target_session)
-=======
     target_session = int(cfg.get("analysis_session", 2))
     print(f"Extracting session index {target_session} features...")
 
@@ -1353,7 +1345,6 @@ def main() -> None:
 
     save_global_summary()
     print(f"Saved feature analysis outputs to {RESULT_DIR}")
->>>>>>> Stashed changes
 
 
 if __name__ == "__main__":
