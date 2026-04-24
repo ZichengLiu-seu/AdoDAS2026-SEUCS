@@ -808,8 +808,8 @@ def main() -> None:
     else:
         device = torch.device(device_str)
 
-    output_root = Path(cfg.get("output_dir", "/media/k3nwong/Data1/test/train/output"))
-    manifest_dir = Path(cfg.get("manifest_dir", "/media/k3nwong/Data1/test/outputs/data"))
+    output_root = Path(cfg.get("output_dir", "/home/zhouyue/AdodasChallange/AdoDAS2026-SEUCS/outputs"))
+    manifest_dir = Path(cfg.get("manifest_dir", "/home/data1/AdodasDataset"))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = build_run_name(cfg, task, timestamp, training_mode="grouped_participant")
