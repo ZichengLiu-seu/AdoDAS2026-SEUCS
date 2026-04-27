@@ -23,7 +23,7 @@ import yaml
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
 from .models.mtcn_backbone import BackboneConfig, MTCNBackbone
-from .models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone
+from .models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone, TriModalConfig, TextCoreBackbone
 from .models.heads import A1Head, A1SpecificHead, A2OrdinalHead, a1_loss, a2_ordinal_loss
 from .models.grouped_model import GroupedModel, CORALHead
 from .utils.seed import seed_everything

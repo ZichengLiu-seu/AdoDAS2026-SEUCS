@@ -402,8 +402,6 @@ class TriModalConfig:
     d_adapter: int = 64
     d_model: int = 256
     d_text: int = 256
-    d_low: int = 32
-    d_high: int = 128
 
     tcn_layers: int = 4
     tcn_kernel_size: int = 3
@@ -422,8 +420,6 @@ class TriModalConfig:
     max_seq_len: int = 512
     d_text_embed: int = 128
     text_encoder_layers: int = 2
-    use_pretrained_text: bool = False
-    text_model_name: str = "bert-base-uncased"
 
 
 class TextEncoder(nn.Module):

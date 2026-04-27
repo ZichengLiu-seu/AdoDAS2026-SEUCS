@@ -63,7 +63,7 @@ class GroupedParticipantDataset(Dataset):
         self._feature_dims: dict[str, int] | None = None
         self._cache: list[dict | None] | None = None
 
-        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+        self.tokenizer = RobertaTokenizer.from_pretrained("/home/data1/OpensourceModel/RoBERTa_tokenizer_ch")
 
     @property
     def feature_dims(self) -> dict[str, int]:
@@ -115,18 +115,20 @@ class GroupedParticipantDataset(Dataset):
                 pass
         return groups
 
-    def _load_text(self, row) -> dict[str, SequenceData]:
+    def _load_text(self, row):
         cfg = self.cfg
-        groups: dict[str, SequenceData] = {}
+        groups = {}
         try:
             txt = load_transcript(
                 self.root, self.split,
                 str(row["anon_school"]), str(row["anon_class"]), str(row["anon_pid"]),
                 str(row["session"]),
-            )
+            )            
+            # print(f"DEBUG: reading txt : {txt}")
             groups["text_token_ids"] = self.tokenizer(txt, return_tensors="pt")
         except FileNotFoundError:
-            # print(f"DEBUG: file not found")
+            error_txt = str(row["session"])
+            log.debug(f"txt not found for {error_txt}")
             pass
         return groups
 
@@ -171,6 +173,7 @@ class GroupedParticipantDataset(Dataset):
 
             audio_groups: dict[str, torch.Tensor] = {}
             video_groups: dict[str, torch.Tensor] = {}
+            text_groups: dict[str, torch.Tensor] = {}
             audio_mask_parts, audio_mask_names = [], []
             video_mask_parts, video_mask_names = [], []
 
@@ -243,7 +246,7 @@ class GroupedParticipantDataset(Dataset):
                 "session_idx": session_idx,
                 "seq_len": T,
                 "session": str(row["session"]),
-                "text_token_ids": None,
+                "text_token_ids": text_raw,
             }
         except Exception as e:
             log.debug(f"Failed to load session {row.get('session', '?')} for {row.get('anon_pid', '?')}: {e}")

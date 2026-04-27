@@ -15,6 +15,7 @@ class SequenceData(NamedTuple):
 
 _MEL_MFCC_KEYS = ("mel_features", "mfcc_features")
 _GENERIC_KEY = "features"
+_A1_TEXT = "有一回，北风跟太阳在那儿争论谁的本领大。说着说着，来了一个过路的，身上穿了一件厚袍子。他们俩就商量好了，说谁能先叫这个过路的把他的袍子脱下来，就算是他的本领大。北风就使劲吹起来，拼命地吹。可是，他吹得越厉害，那个人就把他的袍子裹得越紧。到末了儿，北风没辙了，只好就算了。一会儿，太阳出来一晒，那个人马上就把袍子脱了下来。所以，北风不得不承认，还是太阳比他的本领大。"
 
 
 def load_sequence(
@@ -126,9 +127,11 @@ def load_transcript(
     anon_school: str,
     anon_class: str,
     anon_pid: str,
-    feature_set: str,
     session: str,
-) -> np.ndarray | None:
+) -> str:
+    if session == "A01":
+        return _A1_TEXT
+    
     parts = [root, split, anon_school, anon_class, anon_pid, session]
     trainscript_path = Path(*[str(p) for p in parts]) / "normalized_transcript.txt"
     
@@ -136,9 +139,8 @@ def load_transcript(
         raise FileNotFoundError(f"Missing transcript file: {trainscript_path}")
     
     with open(trainscript_path, "r") as f:
-        lines = f.readlines()
-    print(f"DEBUG: reading txt : {lines}")
-    return np.array(lines, dtype=np.float32)
+        lines = f.readline().strip()
+    return lines
 
 
 def discover_feature_sets(
