@@ -41,11 +41,11 @@ text_encoder_layers: 2
 temporal_conv: TriM
 aggregator: mlp
 batch_size: 64
-lr: 0.001
+lr: 0.0001
 weight_decay: 0.01
 multistep: false
-warmup_epochs: 5
-epochs: 20
+warmup_epochs: 1
+epochs: 10
 seed: 42
 num_workers: 8
 amp: false

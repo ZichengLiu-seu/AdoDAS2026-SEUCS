@@ -33,7 +33,8 @@ class GroupAdapter(nn.Module):
         self.drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.drop(F.gelu(self.proj(self.norm(x))))
+        # return self.drop(F.gelu(self.proj(self.norm(x))))
+        return self.drop(F.relu(self.proj(self.norm(x))))
 
 class ModalityFusion(nn.Module):
     def __init__(self, n_groups: int, d_adapter: int, d_model: int) -> None:
@@ -67,7 +68,8 @@ class DilatedResidualBlock(nn.Module):
         h = self.norm1(x)
         h = h.transpose(1, 2)
         h = self.conv1(h)[:, :, :T]
-        h = F.gelu(h)
+        # h = F.gelu(h)
+        h = F.relu(h)
         h = self.drop(h)
 
         # block 2
@@ -152,7 +154,8 @@ class MTCNBackbone(nn.Module):
             name: nn.Sequential(
                 nn.LayerNorm(d_in),
                 nn.Linear(d_in, cfg.d_adapter),
-                nn.GELU(),
+                nn.ReLU(),
+                # nn.GELU(),
                 nn.Dropout(cfg.dropout),
             )
             for name, d_in in cfg.audio_pooled_group_dims.items()
@@ -186,7 +189,8 @@ class MTCNBackbone(nn.Module):
 
         self.fusion_mlp = nn.Sequential(
             nn.Linear(fusion_in, cfg.d_shared),
-            nn.GELU(),
+            nn.ReLU(),
+            # nn.GELU(),
             nn.Dropout(cfg.dropout),
             nn.Linear(cfg.d_shared, cfg.d_shared),
         )

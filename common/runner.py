@@ -227,12 +227,12 @@ def _build_scheduler(optimizer, warmup_epochs, total_epochs, multistep):
         warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
         )
-        # cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-        #     optimizer, T_max=total_epochs - warmup_epochs, eta_min=1e-4
-        # )
-        cosine = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=total_epochs - warmup_epochs, T_mult=2, eta_min=1e-6
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=total_epochs - warmup_epochs, eta_min=1e-6
         )
+        # cosine = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        #     optimizer, T_0=total_epochs - warmup_epochs, T_mult=2, eta_min=1e-6
+        # )
         return torch.optim.lr_scheduler.SequentialLR(
             optimizer, schedulers=[warmup, cosine], milestones=[warmup_epochs]
         )

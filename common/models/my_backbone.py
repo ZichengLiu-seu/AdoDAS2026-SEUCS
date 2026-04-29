@@ -355,6 +355,10 @@ class TwinTowerBackbone(nn.Module):
         self.audio_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
         self.video_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
 
+        self.a_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
+        self.v_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
+        self.a_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
+        self.v_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
 
         self.audio_ssl_proj = nn.Linear(cfg.audio_group_dims["ssl_embed"], cfg.d_high)
         self.video_ssl_proj = nn.Linear(cfg.video_group_dims["vision_ssl_embed"], cfg.d_high)
@@ -384,8 +388,15 @@ class TwinTowerBackbone(nn.Module):
         a_high_repr = self.audio_ssl_proj(batch["audio_groups"]["ssl_embed"])
         v_high_repr = self.video_ssl_proj(batch["video_groups"]["vision_ssl_embed"])
 
-        return a_low_repr.mean(dim=1), v_low_repr.mean(dim=1), \
-            a_high_repr.mean(dim=1), v_high_repr.mean(dim=1)
+        vad = batch["vad_signal"]
+        qc = batch["qc_quality"]
+        a_low_repr = self.a_low_asp(a_low_repr, mask_a, vad, qc)
+        v_low_repr = self.v_low_asp(v_low_repr, mask_v, vad, qc)
+        a_high_repr = self.a_high_asp(a_high_repr, mask_a, vad,
+            qc)
+        v_high_repr = self.v_high_asp(v_high_repr, mask_v, vad, qc)
+
+        return a_low_repr, v_low_repr, a_high_repr, v_high_repr
 
 
     def load_pretrained(self, pt_path: str, device: torch.device) -> None:
