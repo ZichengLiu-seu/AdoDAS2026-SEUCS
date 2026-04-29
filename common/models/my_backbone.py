@@ -394,6 +394,7 @@ class TwinTowerBackbone(nn.Module):
         self.load_state_dict(state_dict, strict=False)
 
 # ========================================V-T-A Modules==================================================
+@dataclass
 class TriModalConfig:
     audio_group_dims: dict[str, int] = field(default_factory=dict)
     audio_pooled_group_dims: dict[str, int] = field(default_factory=dict)

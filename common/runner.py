@@ -915,6 +915,26 @@ def main() -> None:
             d_shared=cfg.get("d_shared", 256),
         )
         backbone = DualTCNBackbone(bb_cfg)
+    elif temporal_conv == "TriM":
+        bb_cfg = TriModalConfig(
+            audio_group_dims=audio_group_dims,
+            audio_pooled_group_dims=audio_pooled_group_dims,
+            video_group_dims=video_group_dims,
+            d_adapter=cfg.get("d_adapter", 64),
+            d_model=cfg.get("d_model", 256),
+            tcn_layers=cfg.get("tcn_layers", 6),
+            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+            n_heads=cfg.get("n_heads", 4),
+            asp_alpha=cfg.get("asp_alpha", 0.5),
+            asp_beta=cfg.get("asp_beta", 0.5),
+            dropout=cfg.get("dropout", 0.2),
+            d_shared=cfg.get("d_shared", 256),
+            vocab_size=cfg.get("vocab_size", 10000),
+            max_seq_len=cfg.get("max_seq_len", 100),
+            d_text_embed=cfg.get("d_text_embed", 128),
+            text_encoder_layers=cfg.get("text_encoder_layers", 2),
+        )
+        backbone = TextCoreBackbone(bb_cfg)
         
     grouped_model = GroupedModel(
         backbone=backbone,

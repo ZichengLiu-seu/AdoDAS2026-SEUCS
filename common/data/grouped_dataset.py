@@ -128,12 +128,12 @@ class GroupedParticipantDataset(Dataset):
             groups["text_token_ids"] = self.tokenizer(txt, return_tensors="pt")
         except FileNotFoundError:
             error_txt = str(row["session"])
-            log.debug(f"txt not found for {error_txt}")
+            log.info(f"txt not found for {error_txt}")
             pass
         return groups
 
     def _compute_modality_mask(
-        self, mask_parts, mask_names, policy, T
+        self, mask_parts, mask_names, core_names, policy, T
     ) -> np.ndarray:
         if not mask_parts:
             return np.zeros(T, dtype=bool)
@@ -249,7 +249,7 @@ class GroupedParticipantDataset(Dataset):
                 "text_token_ids": text_raw,
             }
         except Exception as e:
-            log.debug(f"Failed to load session {row.get('session', '?')} for {row.get('anon_pid', '?')}: {e}")
+            log.info(f"Failed to load session {row.get('session', '?')} for {row.get('anon_pid', '?')}: {e}")
             return None
 
     def __len__(self) -> int:
