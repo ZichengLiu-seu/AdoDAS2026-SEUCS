@@ -117,7 +117,6 @@ class GroupedParticipantDataset(Dataset):
 
     def _load_text(self, row):
         cfg = self.cfg
-        groups = {}
         try:
             txt = load_transcript(
                 self.root, self.split,
@@ -125,12 +124,11 @@ class GroupedParticipantDataset(Dataset):
                 str(row["session"]),
             )            
             # print(f"DEBUG: reading txt : {txt}")
-            groups["text_token_ids"] = self.tokenizer(txt, return_tensors="pt")
+            return self.tokenizer(txt, return_tensors="pt")
         except FileNotFoundError:
             error_txt = str(row["session"])
             log.info(f"txt not found for {error_txt}")
-            pass
-        return groups
+            return None
 
     def _compute_modality_mask(
         self, mask_parts, mask_names, core_names, policy, T
@@ -403,6 +401,7 @@ def grouped_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
     n_flat = len(all_sessions)
     T_max = max(s["seq_len"] for s in all_sessions)
+    txt_max = max(s["text_token_ids"]["input_ids"].shape[-1] for s in all_sessions)
 
     audio_names = list(all_sessions[0]["audio_groups"].keys())
     pooled_audio_names = list(all_sessions[0]["audio_pooled_groups"].keys())
@@ -424,6 +423,16 @@ def grouped_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
         for i, s in enumerate(all_sessions):
             L = s["seq_len"]
             t[i, :L] = s[key]
+        return t
+
+    def _pad_txt():
+        t = torch.zeros(n_flat, txt_max, dtype=torch.long)
+        for i, s in enumerate(all_sessions):
+            L = s["text_token_ids"]["input_ids"].shape[-1]
+            t[i, :L] = s["text_token_ids"]["input_ids"].view(-1)
+        # for i, s in enumerate(all_sessions):
+        #     L = s["text_token_ids"]["attention_mask"].shape[-1]
+        #     t[i, :L] = s["text_token_ids"]["attention_mask"].view(-1)
         return t
 
     pad_mask = torch.ones(n_flat, T_max, dtype=torch.bool)
@@ -449,6 +458,7 @@ def grouped_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
             )
             for name in pooled_audio_names
         },
+        "text_token_ids": _pad_txt(),
         "session_idx": torch.tensor([s["session_idx"] for s in all_sessions], dtype=torch.long),
         "seq_len": torch.tensor([s["seq_len"] for s in all_sessions], dtype=torch.long),
         "anon_pid": flat_pids,
@@ -488,6 +498,7 @@ def _make_dummy_session(ref: dict[str, Any]) -> dict[str, Any]:
         "audio_pooled_present": {
             k: False for k in ref["audio_pooled_groups"].keys()
         },
+        "text_token_ids": ref["text_token_ids"],
         "session_idx": 0,
         "seq_len": T,
         "session": "A01",
