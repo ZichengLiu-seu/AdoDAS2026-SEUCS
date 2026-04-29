@@ -172,7 +172,7 @@ class PreTrainModel(nn.Module):
         session_valid: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
 
-        a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)  # B*4, T, dim --> B#4, dim
+        a_low_repr, v_low_repr, a_high_repr, v_high_repr = self.backbone(flat_batch)  # B*4, T, dim --> mean: B*4, dim; ASP: B*4, 2 * dim
 
         return {
             "a_low_repr": a_low_repr,
