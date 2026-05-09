@@ -212,7 +212,7 @@ class PostTrainModel(nn.Module):
         session_reprs = torch.cat([a_low_repr, v_low_repr, a_high_repr, v_high_repr], dim=-1)  # B*4, lowdim*2 + highdim*2
 
         session_grid = session_reprs.view(B, 4, -1)  # B, 4, dim
-
+        # print(f"DEBUG: session_grid size : {session_grid.shape}")
         participant_repr = self.aggregator(session_grid, session_valid) 
 
         session_type_logits = self.session_type_head(session_reprs).squeeze(-1)

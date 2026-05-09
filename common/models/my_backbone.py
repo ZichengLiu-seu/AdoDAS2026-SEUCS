@@ -187,14 +187,14 @@ class DualTCNBackbone(nn.Module):
         self.audio_pooled_group_names = sorted(cfg.audio_pooled_group_dims.keys())
         self.video_group_names = sorted(cfg.video_group_dims.keys())
 
-        # self.inter_audio_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
-        # self.inter_video_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
-        self.audio_fusion = ModalityFusion(
-            len(self.audio_group_names), cfg.d_adapter, cfg.d_model
-        )
-        self.video_fusion = ModalityFusion(
-            len(self.video_group_names), cfg.d_adapter, cfg.d_model
-        )
+        self.inter_audio_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
+        self.inter_video_attn = InterModalityAttention(cfg.d_adapter, cfg.d_model, num_heads=cfg.n_heads, dropout=cfg.dropout)
+        # self.audio_fusion = ModalityFusion(
+        #     len(self.audio_group_names), cfg.d_adapter, cfg.d_model
+        # )
+        # self.video_fusion = ModalityFusion(
+        #     len(self.video_group_names), cfg.d_adapter, cfg.d_model
+        # )
 
         # self.audio_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
         # self.video_tcn = TCN(cfg.d_model, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
@@ -215,7 +215,7 @@ class DualTCNBackbone(nn.Module):
         fusion_in += cfg.d_session
 
         self.session_embed = nn.Embedding(cfg.n_sessions, cfg.d_session)
-        # self.session_proj = nn.Linear(cfg.d_session, cfg.d_adapter)
+        self.session_proj = nn.Linear(cfg.d_session, cfg.d_adapter)
 
         self.fusion_mlp = nn.Sequential(
             nn.Linear(fusion_in, cfg.d_shared),
@@ -223,7 +223,7 @@ class DualTCNBackbone(nn.Module):
             nn.Dropout(cfg.dropout),
             nn.Linear(cfg.d_shared, cfg.d_shared),
         )
-        # self.late_fusion_transformer = LateFusionTransformer(d_in=cfg.d_adapter, d_out=cfg.d_shared, nhead=cfg.n_heads, num_layers=2, dropout=cfg.dropout)
+        self.late_fusion_transformer = LateFusionTransformer(d_in=cfg.d_adapter, d_out=cfg.d_shared, nhead=cfg.n_heads, num_layers=2, dropout=cfg.dropout)
 
         self._init_weights()
 
@@ -247,11 +247,11 @@ class DualTCNBackbone(nn.Module):
         ]
 
         # TODO：在这里加更早期的attention，保证对于有语义的channel建模 --> ASP背景下弱于baseline
-        # a = self.inter_audio_attn(audio_adapted)
-        # v = self.inter_video_attn(video_adapted)
+        a = self.inter_audio_attn(audio_adapted)
+        v = self.inter_video_attn(video_adapted)
         # print(f"DEBUG: inter modality attention output size : a {a.shape}, v {v.shape}")  # B, T, 64
-        a = self.audio_fusion(audio_adapted)
-        v = self.video_fusion(video_adapted)
+        # a = self.audio_fusion(audio_adapted)
+        # v = self.video_fusion(video_adapted)
         # print(f"DEBUG: modality fusion output size : a {a.shape}, v {v.shape}")  # 256, T, 256
 
         mask_a = batch["mask_audio"]
@@ -274,36 +274,36 @@ class DualTCNBackbone(nn.Module):
         qc = batch["qc_quality"]
         z_a = self.audio_asp(a, mask_a, vad, qc)
         z_v = self.video_asp(v, mask_v, vad, qc)
-        # print(f"DEBUG: ASP output size : z_a {z_a.shape}, z_v {z_v.shape}")  # B, 512
+        # print(f"DEBUG: ASP output size : z_a {z_a.shape}, z_v {z_v.shape}")  # B * 4, 512 ([mean, std])
         # z_a = self.audio_newasp(a, mask_a, vad, qc)
         # z_v = self.video_newasp(v, mask_v, vad, qc)
-        # print(f"DEBUG: newASP output size : z_a {z_a.shape}, z_v {z_v.shape}")
+        # print(f"DEBUG: newASP output size : z_a {z_a.shape}, z_v {z_v.shape}")  # B * 4, 256
 
-        parts = [z_a, z_v]
-        parts.extend(
-            self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
-            for name in self.audio_pooled_group_names
-        )
-        parts.append(self.session_embed(batch["session_idx"]))        
-        z = torch.cat(parts, dim=-1)
-        # print(f"DEBUG: concatenated feature size : {z.shape}")
-        return self.fusion_mlp(z)
-
-        # z_a = self.audio_proj(z_a)
-        # z_v = self.video_proj(z_v)
         # parts = [z_a, z_v]
         # parts.extend(
         #     self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
         #     for name in self.audio_pooled_group_names
         # )
-        # parts.append(self.session_proj(self.session_embed(batch["session_idx"])))
+        # parts.append(self.session_embed(batch["session_idx"]))        
+        # z = torch.cat(parts, dim=-1)
+        # # print(f"DEBUG: concatenated feature size : {z.shape}")  # B * 4, 2 * d_model(256*2) + d_session(16) + 2 * d_adapter(32*2)
+        # return self.fusion_mlp(z)
+
+        z_a = self.audio_proj(z_a)
+        z_v = self.video_proj(z_v)
+        parts = [z_a, z_v]
+        parts.extend(
+            self.audio_pooled_adapters[name](batch["audio_pooled_groups"][name])
+            for name in self.audio_pooled_group_names
+        )
+        parts.append(self.session_proj(self.session_embed(batch["session_idx"])))
         # print(f"DEBUG: parts size : {[part.shape for part in parts]}")
 
-        # parts = torch.stack(parts, dim=1)
+        parts = torch.stack(parts, dim=1)
         # print(f"DEBUG: stacked parts size : {parts.shape}")
-        # z = self.late_fusion_transformer(parts).mean(dim=1)
+        z = self.late_fusion_transformer(parts).mean(dim=1)
         # print(f"DEBUG: late fusion transformer output size : {z.shape}")
-        # return z
+        return z
 
 # ========================================TwinTower-Related Modules========================================
 class GatedFusion(nn.Module):
@@ -352,16 +352,27 @@ class TwinTowerBackbone(nn.Module):
         self.video_fusion = ModalityFusion(
             len(self.video_group_names) - 1, cfg.d_low, cfg.d_low,
         )
-        self.audio_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-        self.video_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-
+        # self.audio_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        # self.video_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
+        self.audio_lstm = LSTM(cfg.d_low, cfg.d_low, n_layers=2)
+        self.video_lstm = LSTM(cfg.d_low, cfg.d_low, n_layers=2)
         self.a_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
         self.v_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
         self.a_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
         self.v_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
 
-        self.audio_ssl_proj = nn.Linear(cfg.audio_group_dims["ssl_embed"], cfg.d_high)
-        self.video_ssl_proj = nn.Linear(cfg.video_group_dims["vision_ssl_embed"], cfg.d_high)
+        self.audio_ssl_proj = nn.Sequential(
+            nn.Linear(cfg.audio_group_dims["ssl_embed"], cfg.d_high),
+            nn.ReLU(),
+            nn.Dropout(cfg.dropout),
+            nn.Linear(cfg.d_high, cfg.d_high),
+        )
+        self.video_ssl_proj = nn.Sequential(
+            nn.Linear(cfg.video_group_dims["vision_ssl_embed"], cfg.d_high),
+            nn.ReLU(),
+            nn.Dropout(cfg.dropout),
+            nn.Linear(cfg.d_high, cfg.d_high),
+        )
 
 
     def forward(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -380,10 +391,12 @@ class TwinTowerBackbone(nn.Module):
         v_low_fusion = self.video_fusion(video_adapted)
         mask_a = batch["mask_audio"]
         mask_v = batch["mask_video"]
-        a = a_low_fusion * mask_a.unsqueeze(-1).float()
-        v = v_low_fusion * mask_v.unsqueeze(-1).float()
-        a_low_repr = self.audio_tcn(a, mask_a)
-        v_low_repr = self.video_tcn(v, mask_v)
+        # a = a_low_fusion * mask_a.unsqueeze(-1).float()
+        # v = v_low_fusion * mask_v.unsqueeze(-1).float()
+        # a_low_repr = self.audio_tcn(a, mask_a)
+        # v_low_repr = self.video_tcn(v, mask_v)
+        a_low_repr = self.audio_lstm(a_low_fusion)
+        v_low_repr = self.video_lstm(v_low_fusion)
 
         a_high_repr = self.audio_ssl_proj(batch["audio_groups"]["ssl_embed"])
         v_high_repr = self.video_ssl_proj(batch["video_groups"]["vision_ssl_embed"])
@@ -396,6 +409,8 @@ class TwinTowerBackbone(nn.Module):
             qc)
         v_high_repr = self.v_high_asp(v_high_repr, mask_v, vad, qc)
 
+        # print(f"DEBUG: a_low_repr size : {a_low_repr.shape}, v_low_repr size : {v_low_repr.shape}")  # B*4, T, d_low * 2
+        # print(f"DEBUG: a_high_repr size : {a_high_repr.shape}, v_high_repr size : {v_high_repr.shape}")  # B*4, T, d_high * 2
         return a_low_repr, v_low_repr, a_high_repr, v_high_repr
 
 

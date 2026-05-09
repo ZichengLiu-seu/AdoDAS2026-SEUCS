@@ -26,7 +26,8 @@ import yaml
 from .runner import parse_args, load_config, seed_everything, build_run_name, setup_run_dirs, setup_logging, \
     _fmt_duration, _to_device, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, _build_scheduler, \
     AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped, \
-    _normalize_decode_method, collect_val_logits_grouped_a1, calibrate_a1_bias,\
+    _normalize_decode_method, collect_val_logits_grouped_a1, collect_val_logits_grouped_a2, calibrate_a1_bias, _evaluate_a2_decode_candidates, calibrate_a2_thresholds, \
+    _decode_a2_logits, _select_best_a2_result, \
     generate_submission_grouped
 from .data.dataset import FeatureConfig, ITEM_COLS, A1_COLS
 from .data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
@@ -34,6 +35,7 @@ from .models.grouped_model import GroupedModel, PreTrainModel, PostTrainModel, C
 from .models.mtcn_backbone import MTCNBackbone, BackboneConfig
 from .models.my_backbone import DualTCNBackbone, DualTCNBackboneConfig, TwinTowerBackbone
 from .models.heads import contrastive_loss, supcon_loss, a1_loss, a2_ordinal_loss, A1Head, A1SpecificHead, A2OrdinalHead
+from .utils.metrics import binary_f1, macro_auroc, per_class_f1, mean_qwk, mean_mae, per_item_qwk
 from .utils.ckpt import save_checkpoint, load_checkpoint
 from .utils.run_naming import build_run_name, setup_run_dirs
 from .utils.run_metadata import RunMetadata
@@ -101,7 +103,7 @@ def pretrain_one_epoch(
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(
-                list(ssl_model.parameters()), # + list(adaptive_loss_weight.parameters()),
+                list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters()),
                 max_norm=grad_clip,
             )
             scaler.step(optimizer)
@@ -109,7 +111,7 @@ def pretrain_one_epoch(
         else:
             loss.backward()
             nn.utils.clip_grad_norm_(
-                list(ssl_model.parameters()), #  + list(adaptive_loss_weight.parameters()),    
+                list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters()),    
                 max_norm=grad_clip,
             )
             optimizer.step()
@@ -599,8 +601,8 @@ def postTrain():
 
     d_low=cfg.get("d_low", 32)
     d_high=cfg.get("d_high", 128)
-    d_backbone_out = (d_low + d_high) * 2
-    print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
+    d_backbone_out = (d_low + d_high) * 4
+    # print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
     ssl_model = PostTrainModel(
         backbone=backbone,
         d_backbone_out=d_backbone_out,

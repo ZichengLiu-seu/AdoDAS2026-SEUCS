@@ -26,8 +26,6 @@ core_video: [vision_ssl_embed, qc_stats]
 
 d_adapter: 32
 d_model: 256
-d_low: 32
-d_high: 256
 tcn_layers: 6
 tcn_kernel_size: 3
 n_heads: 4
@@ -36,26 +34,27 @@ asp_beta: 0.5
 dropout: 0.3
 d_shared: 256
 
-temporal_conv: TwinTower
+temporal_conv: DualTCN
 aggregator: mlp
+use_coral: true
 batch_size: 64
 lr: 0.001
 weight_decay: 0.01
 multistep: false
-warmup_epochs: 2
+warmup_epochs: 5
 epochs: 20
 seed: 42
 num_workers: 8
-amp: false
+amp: true
 preload: false
 grad_clip: 1.0
 use_pos_weight: true
-patience: 10
-session_loss_weight: 0.2
+patience: 6
+session_loss_weight: 0.2  # 0.5
 session_type_loss_weight: 0.15
 submission_level: participant
 decode_method: auto
-label_smoothing: 0.3
-feature_noise_std: 0.2
-session_drop_prob: 0.0
+label_smoothing: 0  # 0.05
+feature_noise_std: 0  # 0.01
+session_drop_prob: 0  # 0.1
 early_stop_metric: val_loss

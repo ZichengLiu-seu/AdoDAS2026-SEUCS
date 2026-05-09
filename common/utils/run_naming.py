@@ -38,12 +38,16 @@ def build_run_name(
     temporal_conv = cfg.get("temporal_conv", "default")
     if task == "a2" and use_coral:
         parts.append("coral")
-    elif temporal_conv == "default":
+    
+    if temporal_conv == "default":
         parts.append("mtcn")
     elif temporal_conv == "DualTCN":
         parts.append("DualTCN")
     elif temporal_conv == "TwinTower":
         parts.append("TwinTower")
+    elif temporal_conv == "TriM":
+        parts.append("TriModal")
+
 
     audio_feats = cfg.get("audio_features", [])
     if not isinstance(audio_feats, list):

@@ -16,6 +16,7 @@ from common.data.grouped_dataset import GroupedParticipantDataset, grouped_colla
 from common.models.grouped_model import CORALHead, GroupedModel
 from common.models.heads import A1Head, A2OrdinalHead
 from common.models.mtcn_backbone import BackboneConfig, MTCNBackbone
+from common.models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone
 from common.runner import (
     _normalize_decode_method,
     generate_submission_grouped,
@@ -29,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", required=True, choices=["a1", "a2"])
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", default=None)
-    parser.add_argument("--split", default="test_hidden")
+    parser.add_argument("--split", default="test")
     parser.add_argument("--manifest", default=None)
     parser.add_argument("--output", default=None)
     return parser.parse_args()
@@ -119,21 +120,44 @@ def main() -> None:
     )
 
     dims = ds.feature_dims
-    bb_cfg = BackboneConfig(
-        audio_group_dims={n: dims[n] for n in feat_cfg.audio_sequence_features if n in dims},
-        audio_pooled_group_dims={n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims},
-        video_group_dims={n: dims[n] for n in feat_cfg.video_features if n in dims},
-        d_adapter=cfg.get("d_adapter", 64),
-        d_model=cfg.get("d_model", 256),
-        tcn_layers=cfg.get("tcn_layers", 6),
-        tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
-        asp_alpha=cfg.get("asp_alpha", 0.5),
-        asp_beta=cfg.get("asp_beta", 0.5),
-        dropout=cfg.get("dropout", 0.2),
-        d_shared=cfg.get("d_shared", 256),
-    )
+    audio_group_dims = {n: dims[n] for n in feat_cfg.audio_sequence_features if n in dims}
+    audio_pooled_group_dims = {n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims}
+    video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
+    temporal_conv = cfg.get("temporal_conv", "default")
+    if temporal_conv == "default":
+        bb_cfg = BackboneConfig(
+            audio_group_dims=audio_group_dims,
+            audio_pooled_group_dims=audio_pooled_group_dims,
+            video_group_dims=video_group_dims,
+            d_adapter=cfg.get("d_adapter", 64),
+            d_model=cfg.get("d_model", 256),
+            tcn_layers=cfg.get("tcn_layers", 6),
+            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+            asp_alpha=cfg.get("asp_alpha", 0.5),
+            asp_beta=cfg.get("asp_beta", 0.5),
+            dropout=cfg.get("dropout", 0.2),
+            d_shared=cfg.get("d_shared", 256),
+        )
+        backbone = MTCNBackbone(bb_cfg)
+    elif temporal_conv == "DualTCN" or temporal_conv == "TwinTower":
+        bb_cfg = DualTCNBackboneConfig(
+            audio_group_dims=audio_group_dims,
+            audio_pooled_group_dims=audio_pooled_group_dims,
+            video_group_dims=video_group_dims,
+            d_adapter=cfg.get("d_adapter", 64),
+            d_model=cfg.get("d_model", 256),
+            tcn_layers=cfg.get("tcn_layers", 6),
+            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+            n_heads=cfg.get("n_heads", 4),
+            asp_alpha=cfg.get("asp_alpha", 0.5),
+            asp_beta=cfg.get("asp_beta", 0.5),
+            dropout=cfg.get("dropout", 0.2),
+            d_shared=cfg.get("d_shared", 256),
+        )
+        backbone = DualTCNBackbone(bb_cfg)
+
     grouped_model = GroupedModel(
-        backbone=MTCNBackbone(bb_cfg),
+        backbone=backbone,
         d_shared=bb_cfg.d_shared,
         aggregator_method=cfg.get("aggregator", "mlp"),
         dropout=cfg.get("dropout", 0.2),
@@ -185,7 +209,7 @@ def main() -> None:
             if info is None:
                 continue
             school, cls = info
-            file_ids.append(f"{school}_{cls}_{pid_str}")
+            file_ids.append({"anon_school" : school, "anon_class" : cls, "anon_pid" : pid_str})
             filtered_preds.append(pred)
     else:
         pid_to_info = {
@@ -208,7 +232,9 @@ def main() -> None:
     if args.task == "a1":
         sub = pd.DataFrame(
             {
-                "file_id": file_ids,
+                "anon_school": file_ids["anon_school"],
+                "anon_class": file_ids["anon_class"],
+                "anon_pid": file_ids["anon_pid"],
                 "p_D": [float(pred[0]) for pred in filtered_preds],
                 "p_A": [float(pred[1]) for pred in filtered_preds],
                 "p_S": [float(pred[2]) for pred in filtered_preds],

@@ -10,11 +10,11 @@ feature_selection:
     - ssl_embed
   video_features:
     - headpose_geom
-    - face_behavior
+    # - face_behavior
     - qc_stats
     - vad_agg
     # - body_pose
-    # - global_motion
+    - global_motion
     - vision_ssl_embed
   audio_ssl_model_tag: wav2vec2-chinese-xlsr
   video_ssl_model_tag: dinov2-large
@@ -39,11 +39,11 @@ batch_size: 64
 lr: 0.001
 weight_decay: 0.01
 warmup_epochs: 1
-epochs: 50
+epochs: 20
 seed: 42
 num_workers: 8
 amp: false
-preload: false
+preload: true
 grad_clip: 1.0
 use_pos_weight: true
 patience: 6

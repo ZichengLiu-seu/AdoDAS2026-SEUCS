@@ -10,15 +10,16 @@ feature_selection:
     - ssl_embed
   video_features:
     - headpose_geom
-    - face_behavior
+    # - face_behavior
     - qc_stats
     - vad_agg
     # - body_pose
-    # - global_motion
+    - global_motion
     - vision_ssl_embed
-  audio_ssl_model_tag: chinese-hubert-large
-  video_ssl_model_tag: vit-mae-base
+  audio_ssl_model_tag: wav2vec2-chinese-xlsr  # chinese-hubert-large
+  video_ssl_model_tag: dinov2-large  # vit-mae-base
 
+device: cuda:1
 mask_policy: and_core
 core_audio: [mel_mfcc, ssl_embed]
 core_video: [vision_ssl_embed, qc_stats]

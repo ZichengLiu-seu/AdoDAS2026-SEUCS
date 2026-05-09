@@ -124,6 +124,7 @@ class ASP(nn.Module):
         qc   : (B, T) float
         Returns: (B, 2*D)
         """
+        # print(f"DEBUG: ASP input x size : {x.shape}, mask size : {mask.shape}, vad size : {vad.shape}, qc size : {qc.shape}")
         e = self.attn(x).squeeze(-1) 
         e = e + self.alpha * vad + self.beta * qc
 

@@ -43,22 +43,35 @@ class GroupedParticipantDataset(Dataset):
             # if school != "SCH_001":
             #     continue
             sess_rows = {}
-            for _, row in group.iterrows():
-                sess = str(row["session"])
-                sess_rows[sess] = row
+            if self.split == "test":
+                for _, row in group.iterrows():
+                    for sess in SESSIONS:
+                        row_with_session = row.copy()
+                        row_with_session['session'] = sess
+                        sess_rows[sess] = row_with_session
+                self.participants.append({
+                    "anon_school": str(school),
+                    "anon_class": str(cls),
+                    "anon_pid": str(pid),
+                    "sess_rows": sess_rows,
+                })
+            else:
+                for _, row in group.iterrows():
+                    sess = str(row["session"])
+                    sess_rows[sess] = row
 
-            any_row = group.iloc[0]
-            y_a1 = np.array([float(any_row.get(c, -1)) for c in A1_COLS], dtype=np.float32)
-            y_a2 = np.array([float(any_row.get(c, -1)) for c in ITEM_COLS], dtype=np.float32)
+                any_row = group.iloc[0]
+                y_a1 = np.array([float(any_row.get(c, -1)) for c in A1_COLS], dtype=np.float32)
+                y_a2 = np.array([float(any_row.get(c, -1)) for c in ITEM_COLS], dtype=np.float32)
 
-            self.participants.append({
-                "anon_school": str(school),
-                "anon_class": str(cls),
-                "anon_pid": str(pid),
-                "sess_rows": sess_rows,
-                "y_a1": y_a1,
-                "y_a2": y_a2,
-            })
+                self.participants.append({
+                    "anon_school": str(school),
+                    "anon_class": str(cls),
+                    "anon_pid": str(pid),
+                    "sess_rows": sess_rows,
+                    "y_a1": y_a1,
+                    "y_a2": y_a2,
+                })
 
         self._feature_dims: dict[str, int] | None = None
         self._cache: list[dict | None] | None = None
@@ -154,7 +167,7 @@ class GroupedParticipantDataset(Dataset):
         try:
             audio_raw = self._load_raw_groups(row, "audio")
             video_raw = self._load_raw_groups(row, "video")
-            text_raw = self._load_text(row)
+            # text_raw = self._load_text(row)
 
             all_groups = {}
             for k, v in audio_raw.items():
@@ -244,7 +257,7 @@ class GroupedParticipantDataset(Dataset):
                 "session_idx": session_idx,
                 "seq_len": T,
                 "session": str(row["session"]),
-                "text_token_ids": text_raw,
+                # "text_token_ids": text_raw,
             }
         except Exception as e:
             log.info(f"Failed to load session {row.get('session', '?')} for {row.get('anon_pid', '?')}: {e}")
@@ -283,16 +296,28 @@ class GroupedParticipantDataset(Dataset):
                 sessions_data.append(None)
                 session_valid.append(False)
 
-        return {
+        if self.split == "test":
+            return{
             "sessions": sessions_data,
             "session_valid": np.array(session_valid, dtype=bool),
-            "y_a1": torch.from_numpy(info["y_a1"]),
-            "y_a2": torch.from_numpy(info["y_a2"]),
             "anon_pid": info["anon_pid"],
             "anon_school": info["anon_school"],
             "anon_class": info["anon_class"],
             "session_names": SESSIONS,
+            "y_a1": torch.zeros(len(A1_COLS), dtype=torch.float32),
+            "y_a2": torch.zeros(len(ITEM_COLS), dtype=torch.float32),
         }
+        else:
+            return {
+                "sessions": sessions_data,
+                "session_valid": np.array(session_valid, dtype=bool),
+                "y_a1": torch.from_numpy(info["y_a1"]),
+                "y_a2": torch.from_numpy(info["y_a2"]),
+                "anon_pid": info["anon_pid"],
+                "anon_school": info["anon_school"],
+                "anon_class": info["anon_class"],
+                "session_names": SESSIONS,
+            }
 
     def _apply_session_dropout(self, sample: dict[str, Any]) -> dict[str, Any]:
         valid_indices = [
@@ -401,7 +426,7 @@ def grouped_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
     n_flat = len(all_sessions)
     T_max = max(s["seq_len"] for s in all_sessions)
-    txt_max = max(s["text_token_ids"]["input_ids"].shape[-1] for s in all_sessions)
+    # txt_max = max(s["text_token_ids"]["input_ids"].shape[-1] for s in all_sessions)
 
     audio_names = list(all_sessions[0]["audio_groups"].keys())
     pooled_audio_names = list(all_sessions[0]["audio_pooled_groups"].keys())
@@ -458,7 +483,7 @@ def grouped_collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
             )
             for name in pooled_audio_names
         },
-        "text_token_ids": _pad_txt(),
+        # "text_token_ids": _pad_txt(),
         "session_idx": torch.tensor([s["session_idx"] for s in all_sessions], dtype=torch.long),
         "seq_len": torch.tensor([s["seq_len"] for s in all_sessions], dtype=torch.long),
         "anon_pid": flat_pids,
@@ -498,7 +523,7 @@ def _make_dummy_session(ref: dict[str, Any]) -> dict[str, Any]:
         "audio_pooled_present": {
             k: False for k in ref["audio_pooled_groups"].keys()
         },
-        "text_token_ids": ref["text_token_ids"],
+        # "text_token_ids": ref["text_token_ids"],
         "session_idx": 0,
         "seq_len": T,
         "session": "A01",
