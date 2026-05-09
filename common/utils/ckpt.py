@@ -39,3 +39,16 @@ def load_checkpoint(
     if optimizer is not None:
         optimizer.load_state_dict(state["optimizer_state_dict"])
     return state
+
+def load_taskhead(
+    path: Path,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer | None = None,
+) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    model.load_state_dict(state["head_state_dict"], strict=False)
+    if optimizer is not None:
+        optimizer.load_state_dict(state["optimizer_state_dict"])
+    return state

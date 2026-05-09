@@ -1,7 +1,7 @@
-feature_root: /home/data1/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/pipeline/anonymized
-manifest_dir: /home/data1/AdodasDataset/  # /media/k3nwong/Data1/test/outputs/data
-output_dir: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs  #  /media/k3nwong/Data1/test/adodas_baseline/output/a1
-pt_path: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs/runs/ssl_pretrain__grouped__TwinTower__a-base-mel_mfcc+vad+egemaps__a-ssl-wav2vec2-chinese-xlsr__v-base-headpose+qc+vadagg+globmot__v-ssl-dinov2-large__mask-andcore__pw__seed42__20260508_203317/checkpoints/best.pt
+feature_root: /home/data1/AdodasDataset/
+manifest_dir: /home/data1/AdodasDataset/
+
+checkpoint: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs/runs/ssl_posttrain_a1__grouped__TwinTower__a-base-mel_mfcc+vad+egemaps__a-ssl-wav2vec2-chinese-xlsr__v-base-headpose+qc+vadagg+globmot__v-ssl-dinov2-large__mask-andcore__pw__seed42__20260509_172937/checkpoints/best.pt
 
 feature_selection:
   audio_features:
@@ -51,12 +51,12 @@ amp: false
 preload: false
 grad_clip: 1.0
 use_pos_weight: true
-patience: 10
+patience: 8
 session_loss_weight: 0.2
 session_type_loss_weight: 0.15
 submission_level: participant
 decode_method: auto
-label_smoothing: 0.3
-feature_noise_std: 0.1
-session_drop_prob: 0.0
+label_smoothing: 0
+feature_noise_std: 0
+session_drop_prob: 0
 early_stop_metric: primary

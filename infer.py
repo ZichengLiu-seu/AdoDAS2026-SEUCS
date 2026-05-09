@@ -13,16 +13,19 @@ import yaml
 
 from common.data.dataset import FeatureConfig
 from common.data.grouped_dataset import GroupedParticipantDataset, grouped_collate_fn
-from common.models.grouped_model import CORALHead, GroupedModel
-from common.models.heads import A1Head, A2OrdinalHead
+from common.models.grouped_model import CORALHead, GroupedModel, PostTrainModel, PreTrainModel
+from common.models.heads import A1Head, A2OrdinalHead, A1SpecificHead
 from common.models.mtcn_backbone import BackboneConfig, MTCNBackbone
-from common.models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone
+from common.models.my_backbone import DualTCNBackboneConfig, DualTCNBackbone, TwinTowerBackbone
 from common.runner import (
     _normalize_decode_method,
     generate_submission_grouped,
-    setup_logging,
+    setup_logging, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, _build_scheduler, \
+    AdaptiveLossWeight, EarlyStopping, _flatten_valid_session_mask, validate_grouped, \
+    collect_val_logits_grouped_a1, collect_val_logits_grouped_a2, calibrate_a1_bias, _evaluate_a2_decode_candidates, calibrate_a2_thresholds, \
+    _decode_a2_logits, _select_best_a2_result,
 )
-from common.utils.ckpt import load_checkpoint
+from common.utils.ckpt import load_checkpoint, load_taskhead
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,11 +60,11 @@ def load_calibration(run_dir: Path, task: str) -> tuple[torch.Tensor | None, tor
     if task == "a1":
         path = calibration_dir / "a1_bias_grouped.json"
         if not path.exists():
-            return None, None, "participant"
+            return None, None, None
         with open(path) as f:
             data = json.load(f)
         biases = torch.tensor(data.get("biases", []), dtype=torch.float32) if data.get("biases") else None
-        return biases, None, "participant"
+        return biases, None, "expectation"
 
     path = calibration_dir / "a2_threshold_offsets_grouped.json"
     if not path.exists():
@@ -74,6 +77,7 @@ def load_calibration(run_dir: Path, task: str) -> tuple[torch.Tensor | None, tor
     offsets = None
     if selected_strategy in strategies and "offsets" in strategies[selected_strategy]:
         offsets = torch.tensor(strategies[selected_strategy]["offsets"], dtype=torch.float32)
+    print(f"[DEBUG]: selected_method: {data.get('selected_method', '')}")
     return None, offsets, selected_method
 
 
@@ -137,9 +141,9 @@ def main() -> None:
             asp_beta=cfg.get("asp_beta", 0.5),
             dropout=cfg.get("dropout", 0.2),
             d_shared=cfg.get("d_shared", 256),
-        )
+        ) 
         backbone = MTCNBackbone(bb_cfg)
-    elif temporal_conv == "DualTCN" or temporal_conv == "TwinTower":
+    elif temporal_conv == "DualTCN":
         bb_cfg = DualTCNBackboneConfig(
             audio_group_dims=audio_group_dims,
             audio_pooled_group_dims=audio_pooled_group_dims,
@@ -155,16 +159,49 @@ def main() -> None:
             d_shared=cfg.get("d_shared", 256),
         )
         backbone = DualTCNBackbone(bb_cfg)
+    elif temporal_conv == "TwinTower":
+        bb_cfg = DualTCNBackboneConfig(
+            audio_group_dims=audio_group_dims,
+            audio_pooled_group_dims=audio_pooled_group_dims,
+            video_group_dims=video_group_dims,
+            d_adapter=cfg.get("d_adapter", 64),
+            d_model=cfg.get("d_model", 256),
+            d_low=cfg.get("d_low", 32),
+            d_high=cfg.get("d_high", 128),
+            tcn_layers=cfg.get("tcn_layers", 6),
+            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+            n_heads=cfg.get("n_heads", 4),
+            asp_alpha=cfg.get("asp_alpha", 0.5),
+            asp_beta=cfg.get("asp_beta", 0.5),
+            dropout=cfg.get("dropout", 0.2),
+            d_shared=cfg.get("d_shared", 256),
+        )
+        backbone = TwinTowerBackbone(bb_cfg)    
 
-    grouped_model = GroupedModel(
-        backbone=backbone,
-        d_shared=bb_cfg.d_shared,
-        aggregator_method=cfg.get("aggregator", "mlp"),
-        dropout=cfg.get("dropout", 0.2),
-    ).to(device)
+    d_backbone_out = None
+    if temporal_conv == "TwinTower":
+        d_low=cfg.get("d_low", 32)
+        d_high=cfg.get("d_high", 128)
+        d_backbone_out = (d_low + d_high) * 4
+        print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
+        grouped_model = PostTrainModel(
+            backbone=backbone,
+            d_backbone_out=d_backbone_out,
+            aggregator_method=cfg.get("aggregator", "mlp"),
+            dropout=cfg.get("dropout", 0.2),
+        ).to(device)
+    else:
+        grouped_model = GroupedModel(
+            backbone=backbone,
+            d_shared=bb_cfg.d_shared,
+            aggregator_method=cfg.get("aggregator", "mlp"),
+            dropout=cfg.get("dropout", 0.2),
+        ).to(device)
 
     if args.task == "a1":
-        task_head = A1Head(bb_cfg.d_shared).to(device)
+        # task_head = A1Head(bb_cfg.d_shared).to(device)
+        bias_init = _compute_bias_init_a1(manifest_dir / "train.csv")
+        task_head = A1SpecificHead(d_backbone_out, bias_init=bias_init).to(device)
     else:
         if bool(cfg.get("use_coral", False)):
             task_head = CORALHead(bb_cfg.d_shared).to(device)
@@ -232,16 +269,22 @@ def main() -> None:
     if args.task == "a1":
         sub = pd.DataFrame(
             {
-                "anon_school": file_ids["anon_school"],
-                "anon_class": file_ids["anon_class"],
-                "anon_pid": file_ids["anon_pid"],
+                "anon_school": [f["anon_school"] for f in file_ids],
+                "anon_class": [f["anon_class"] for f in file_ids],
+                "anon_pid": [f["anon_pid"] for f in file_ids],
                 "p_D": [float(pred[0]) for pred in filtered_preds],
                 "p_A": [float(pred[1]) for pred in filtered_preds],
                 "p_S": [float(pred[2]) for pred in filtered_preds],
             }
         )
     else:
-        sub = pd.DataFrame({"file_id": file_ids})
+        sub = pd.DataFrame(
+            {
+                "anon_school": [f["anon_school"] for f in file_ids],
+                "anon_class": [f["anon_class"] for f in file_ids],
+                "anon_pid": [f["anon_pid"] for f in file_ids],
+            }
+        )
         for idx, col in enumerate([f"d{i:02d}" for i in range(1, 22)]):
             sub[col] = [int(pred[idx]) for pred in filtered_preds]
 
