@@ -117,7 +117,6 @@ class newASP(nn.Module):
         w = w.masked_fill(~mask, 0.0)   # to avoid NaN in mean/std when all masked
         w_unsq = w.unsqueeze(-1)
         masked_x = x * w_unsq
-        # lstm_out, _ = self.lstm(x)
         return torch.mean(masked_x, dim=1)
 
 
@@ -354,24 +353,28 @@ class TwinTowerBackbone(nn.Module):
         )
         # self.audio_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
         # self.video_tcn = TCN(cfg.d_low, cfg.tcn_layers, cfg.tcn_kernel_size, cfg.dropout)
-        self.audio_lstm = LSTM(cfg.d_low, cfg.d_low, n_layers=2)
-        self.video_lstm = LSTM(cfg.d_low, cfg.d_low, n_layers=2)
-        self.a_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
-        self.v_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
-        self.a_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
-        self.v_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
+        self.audio_lstm = LSTM(cfg.d_low, cfg.d_low, n_layers=4)
+        self.video_lstm = LSTM(cfg.d_low, cfg.d_low, n_layers=4)
+        # self.a_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
+        # self.v_low_asp = ASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
+        # self.a_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
+        # self.v_high_asp = ASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
+        self.a_low_asp = newASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
+        self.v_low_asp = newASP(cfg.d_low, cfg.asp_alpha, cfg.asp_beta)
+        self.a_high_asp = newASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
+        self.v_high_asp = newASP(cfg.d_high, cfg.asp_alpha, cfg.asp_beta)
 
         self.audio_ssl_proj = nn.Sequential(
-            nn.Linear(cfg.audio_group_dims["ssl_embed"], cfg.d_high),
-            nn.ReLU(),
+            nn.Linear(cfg.audio_group_dims["ssl_embed"], cfg.d_high * 2),
+            nn.GELU(),
             nn.Dropout(cfg.dropout),
-            nn.Linear(cfg.d_high, cfg.d_high),
+            nn.Linear(cfg.d_high * 2, cfg.d_high),
         )
         self.video_ssl_proj = nn.Sequential(
-            nn.Linear(cfg.video_group_dims["vision_ssl_embed"], cfg.d_high),
-            nn.ReLU(),
+            nn.Linear(cfg.video_group_dims["vision_ssl_embed"], cfg.d_high * 2),
+            nn.GELU(),
             nn.Dropout(cfg.dropout),
-            nn.Linear(cfg.d_high, cfg.d_high),
+            nn.Linear(cfg.d_high * 2, cfg.d_high),
         )
 
 
@@ -391,12 +394,12 @@ class TwinTowerBackbone(nn.Module):
         v_low_fusion = self.video_fusion(video_adapted)
         mask_a = batch["mask_audio"]
         mask_v = batch["mask_video"]
-        # a = a_low_fusion * mask_a.unsqueeze(-1).float()
-        # v = v_low_fusion * mask_v.unsqueeze(-1).float()
+        a = a_low_fusion * mask_a.unsqueeze(-1).float()
+        v = v_low_fusion * mask_v.unsqueeze(-1).float()
         # a_low_repr = self.audio_tcn(a, mask_a)
         # v_low_repr = self.video_tcn(v, mask_v)
-        a_low_repr = self.audio_lstm(a_low_fusion)
-        v_low_repr = self.video_lstm(v_low_fusion)
+        a_low_repr = self.audio_lstm(a)
+        v_low_repr = self.video_lstm(v)
 
         a_high_repr = self.audio_ssl_proj(batch["audio_groups"]["ssl_embed"])
         v_high_repr = self.video_ssl_proj(batch["video_groups"]["vision_ssl_embed"])
@@ -405,8 +408,7 @@ class TwinTowerBackbone(nn.Module):
         qc = batch["qc_quality"]
         a_low_repr = self.a_low_asp(a_low_repr, mask_a, vad, qc)
         v_low_repr = self.v_low_asp(v_low_repr, mask_v, vad, qc)
-        a_high_repr = self.a_high_asp(a_high_repr, mask_a, vad,
-            qc)
+        a_high_repr = self.a_high_asp(a_high_repr, mask_a, vad, qc)
         v_high_repr = self.v_high_asp(v_high_repr, mask_v, vad, qc)
 
         # print(f"DEBUG: a_low_repr size : {a_low_repr.shape}, v_low_repr size : {v_low_repr.shape}")  # B*4, T, d_low * 2

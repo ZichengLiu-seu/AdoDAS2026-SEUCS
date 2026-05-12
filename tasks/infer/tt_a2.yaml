@@ -1,7 +1,7 @@
 feature_root: /home/data1/AdodasDataset/
 manifest_dir: /home/data1/AdodasDataset/
 
-checkpoint: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs/runs/a2__grouped__coral__mtcn__a-base-mel_mfcc+vad+egemaps__a-ssl-wav2vec2-chinese-xlsr__v-base-headpose+qc+vadagg+globmot__v-ssl-dinov2-large__mask-andcore__pw_pwthr_autodecode_thrcalib__seed42__20260507_131643/checkpoints/best.pt
+checkpoint: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs/runs/ssl_posttrain_a2__grouped__TwinTower__a-base-mel_mfcc+vad+egemaps__a-ssl-wav2vec2-chinese-xlsr__v-base-headpose+qc+vadagg+globmot__v-ssl-dinov2-large__mask-andcore__pw__seed42__20260509_223504/checkpoints/best.pt
 
 feature_selection:
   audio_features:
@@ -25,26 +25,30 @@ mask_policy: and_core
 core_audio: [mel_mfcc, ssl_embed]
 core_video: [vision_ssl_embed, qc_stats]
 
-d_adapter: 64
+d_adapter: 32
 d_model: 256
+d_low: 32
+d_high: 256  # 128
 tcn_layers: 6
 tcn_kernel_size: 3
+n_heads: 4
 asp_alpha: 0.5
 asp_beta: 0.5
-dropout: 0.2
+dropout: 0
 d_shared: 256
 
-temporal_conv: default
+temporal_conv: TwinTower
 aggregator: mlp
 use_coral: true
 batch_size: 64
 lr: 0.001
 weight_decay: 0.01
-warmup_epochs: 3
-epochs: 40
+multistep: false
+warmup_epochs: 2
+epochs: 20
 seed: 42
 num_workers: 8
-amp: true
+amp: false
 preload: false
 grad_clip: 1.0
 use_pos_weight: true
@@ -53,7 +57,7 @@ session_loss_weight: 0.5
 session_type_loss_weight: 0.15
 submission_level: participant
 decode_method: auto
-label_smoothing: 0.05
-feature_noise_std: 0.01
-session_drop_prob: 0.1
+label_smoothing: 0
+feature_noise_std: 0
+session_drop_prob: 0
 early_stop_metric: val_loss

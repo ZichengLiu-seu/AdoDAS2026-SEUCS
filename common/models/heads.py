@@ -47,9 +47,13 @@ class A1SpecificHead(nn.Module):
         return torch.cat([fc(x) for fc in self.fcs], dim=-1)
 
     @staticmethod
-    def predict_probs(self, logits: torch.Tensor) -> torch.Tensor:
+    def predict_probs(logits: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(logits)
 
+    @staticmethod
+    def predict_int(logits: torch.Tensor) -> torch.Tensor:
+        return (torch.sigmoid(logits) > 0.5).long().sum(dim=-1)
+    
 
 class A2OrdinalHead(nn.Module):
     def __init__(self, d_in: int, n_items: int = 21, n_thresholds: int = 3) -> None:

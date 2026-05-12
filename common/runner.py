@@ -669,7 +669,9 @@ def generate_submission_grouped(
             logits_f = logits.float()
             if a1_biases_t is not None:
                 logits_f = logits_f + a1_biases_t
-            preds = torch.sigmoid(logits_f).cpu().numpy()
+            # preds = torch.sigmoid(logits_f).cpu().numpy()
+            probs = 1.0 / (1.0 + np.exp(-logits_f.cpu().numpy()))
+            preds = (probs > 0.5).astype(int)
         else:
             logits_f = logits.float()
             if a2_offsets_t is not None:

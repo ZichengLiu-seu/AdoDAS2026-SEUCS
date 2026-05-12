@@ -19,9 +19,11 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import yaml
+from sklearn.model_selection import KFold
+import copy
 
 from .runner import parse_args, load_config, seed_everything, build_run_name, setup_run_dirs, setup_logging, \
     _fmt_duration, _to_device, _compute_bias_init_a1, _compute_pos_weight_a1, compute_a2_pos_weight, _build_scheduler, \
@@ -323,175 +325,178 @@ def preTrain():
     )
     log.info(f"Mask policy: {feat_cfg.mask_policy}")
 
-    train_ds = GroupedParticipantDataset(
-        manifest_dir / "train.csv", feat_cfg, split="train",
+    full_ds = GroupedParticipantDataset(
+        manifest_dir / "train_val.csv", feat_cfg, split="train_val",
         session_drop_prob=cfg.get("session_drop_prob", 0.1),
     )
-    val_ds = GroupedParticipantDataset(manifest_dir / "val.csv", feat_cfg, split="val")
-
-    batch_size = cfg.get("batch_size", 64)
-    num_workers = cfg.get("num_workers", 8)
-    log.info(f"Train: {len(train_ds)} participants, Val: {len(val_ds)} participants")
-
-    preload = bool(cfg.get("preload", True))
-    if preload:
-        log.info("Preloading data into RAM ...")
-        t_pre = time.time()
-        train_gb = train_ds.preload(desc="Preload train")
-        val_gb = val_ds.preload(desc="Preload val")
-        log.info(f"Preload done: {train_gb:.1f}G + {val_gb:.1f}G = {train_gb + val_gb:.1f}G, "
-                 f"took {_fmt_duration(time.time() - t_pre)}")
-        num_workers = 0
-
-    log.info(f"batch_size={batch_size}, num_workers={num_workers}")
-
-    train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, collate_fn=grouped_collate_fn,
-        pin_memory=True, drop_last=True,
-        persistent_workers=num_workers > 0,
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, collate_fn=grouped_collate_fn,
-        pin_memory=True,
-        persistent_workers=num_workers > 0,
-    )
-
-    dims = train_ds.feature_dims
-    audio_group_dims = {n: dims[n] for n in feat_cfg.audio_sequence_features if n in dims}
-    audio_pooled_group_dims = {n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims}
-    video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
-
-    temporal_conv = cfg.get("temporal_conv", "default")
-    if temporal_conv == "TwinTower":
-        bb_cfg = DualTCNBackboneConfig(
-            audio_group_dims=audio_group_dims,
-            audio_pooled_group_dims=audio_pooled_group_dims,
-            video_group_dims=video_group_dims,
-            d_adapter=cfg.get("d_adapter", 64),
-            d_model=cfg.get("d_model", 256),
-            d_low=cfg.get("d_low", 32),
-            d_high=cfg.get("d_high", 64),
-            tcn_layers=cfg.get("tcn_layers", 6),
-            tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
-            n_heads=cfg.get("n_heads", 4),
-            asp_alpha=cfg.get("asp_alpha", 0.5),
-            asp_beta=cfg.get("asp_beta", 0.5),
-            dropout=cfg.get("dropout", 0.2),
-            d_shared=cfg.get("d_shared", 256),
+    n_folds = cfg.get("n_folds", 5)
+    kf = KFold(n_splits=n_folds, shuffle=True, random_state=cfg.get("seed", 42))
+    for fold, (train_idx, val_idx) in enumerate(kf.split(full_ds)):
+        log.info(f"\n{'='*40}")
+        log.info(f"Fold {fold+1}/{n_folds}")
+        log.info(f"{'='*40}")
+        train_fold_ds = Subset(full_ds, train_idx)
+        val_fold_ds = Subset(full_ds, val_idx)
+        train_loader = DataLoader(
+            train_fold_ds, batch_size=batch_size, shuffle=True,
+            num_workers=num_workers, collate_fn=grouped_collate_fn,
+            pin_memory=True, drop_last=True,
         )
-        backbone = TwinTowerBackbone(bb_cfg)
-    else:
-        log.error(f"pretrained do not needed in this model")
-        
-
-    ssl_model = PreTrainModel(backbone=backbone).to(device)
-
-    n_params = sum(p.numel() for p in ssl_model.parameters())
-    log.info(f"Model params: {n_params:,}")
-
-    use_amp = bool(cfg.get("amp", True))
-    scaler = torch.amp.GradScaler("cuda") if use_amp else None
-    if use_amp:
-        log.info("AMP enabled (BF16)")
-
-    grad_clip = cfg.get("grad_clip", 1.0)
-
-    adaptive_loss_weight = AdaptiveLossWeight(initial_weights=[0.2, 0.15], device=device)
-    params = list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters())
-    optimizer = torch.optim.AdamW(
-        params, lr=cfg.get("lr", 1e-3), weight_decay=cfg.get("weight_decay", 1e-2)
-    )
-    epochs = cfg.get("epochs", 20)
-    warmup_epochs = cfg.get("warmup_epochs", 3)
-    multistep = cfg.get("multistep", False)
-    scheduler = _build_scheduler(optimizer, warmup_epochs, epochs, multistep)
-    if multistep:
-        log.info(f"Scheduler: warmup={warmup_epochs} -> multistep at epochs, total={epochs}")
-    else:
-        log.info(f"Scheduler: warmup={warmup_epochs} -> cosine, total={epochs}")
-    log.info(f"Grad clip: {grad_clip}")
-
-    patience = cfg.get("patience", 8)
-    early_stop_metric = cfg.get("early_stop_metric", "val_loss")
-    es_mode = "min" if early_stop_metric == "val_loss" else "max"
-    early_stop = EarlyStopping(patience=patience, mode=es_mode)
-    log.info(f"EarlyStopping: patience={patience}, metric={early_stop_metric}, mode={es_mode}")
-
-    label_smoothing = cfg.get("label_smoothing", 0.05)
-    feature_noise_std = cfg.get("feature_noise_std", 0.01)
-    session_drop_prob = cfg.get("session_drop_prob", 0)
-    log.info(f"Label smoothing: {label_smoothing}")
-    log.info(f"Feature noise std: {feature_noise_std}")
-    log.info(f"Session drop prob: {session_drop_prob}")
-
-    best_metric = 1e10
-    metric_name = "Contrastive Loss"
-    t_start = time.time()
-
-    log.info("=" * 90)
-    if task == "ssl_pretrain":
-        log.info("   Epoch  |    LR    | Train Loss | Val Loss | Time")
-    else:
-        log.error(" FAULT ENTRY ")
-    log.info("=" * 90)
-
-    for epoch in range(1, epochs + 1):
-        t0 = time.time()
-
-        train_loss = pretrain_one_epoch(
-            ssl_model, train_loader, optimizer, device,
-            task, epoch, epochs, scaler, use_amp, 
-            grad_clip=grad_clip,
-            best_metric=best_metric,
-            feature_noise_std=feature_noise_std,
-            adaptive_loss_weight=adaptive_loss_weight,
+        val_loader = DataLoader(
+            val_fold_ds, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, collate_fn=grouped_collate_fn,
+            pin_memory=True,
         )
-        val_loss = pretrain_validate(
-            ssl_model, val_loader, device,
-            task, epoch, epochs, use_amp,
-            adaptive_loss_weight=adaptive_loss_weight,
+        # Start normal training for each fold 
+        batch_size = cfg.get("batch_size", 64)
+        num_workers = cfg.get("num_workers", 8)
+        log.info(f"Full Dataset: {len(full_ds)} participants")
+
+        preload = bool(cfg.get("preload", True))
+        if preload:
+            log.info("Preloading data into RAM ...")
+            t_pre = time.time()
+            full_gb = full_ds.preload(desc="Preload full dataset")
+            log.info(f"Preload done: {full_gb:.1f}G, "
+                    f"took {_fmt_duration(time.time() - t_pre)}")
+            num_workers = 0
+
+        log.info(f"batch_size={batch_size}, num_workers={num_workers}")
+
+        dims = full_ds.feature_dims
+        audio_group_dims = {n: dims[n] for n in feat_cfg.audio_sequence_features if n in dims}
+        audio_pooled_group_dims = {n: dims[n] for n in feat_cfg.audio_pooled_features if n in dims}
+        video_group_dims = {n: dims[n] for n in feat_cfg.video_features if n in dims}
+
+        temporal_conv = cfg.get("temporal_conv", "default")
+        if temporal_conv == "TwinTower":
+            bb_cfg = DualTCNBackboneConfig(
+                audio_group_dims=audio_group_dims,
+                audio_pooled_group_dims=audio_pooled_group_dims,
+                video_group_dims=video_group_dims,
+                d_adapter=cfg.get("d_adapter", 64),
+                d_model=cfg.get("d_model", 256),
+                d_low=cfg.get("d_low", 32),
+                d_high=cfg.get("d_high", 64),
+                tcn_layers=cfg.get("tcn_layers", 6),
+                tcn_kernel_size=cfg.get("tcn_kernel_size", 3),
+                n_heads=cfg.get("n_heads", 4),
+                asp_alpha=cfg.get("asp_alpha", 0.5),
+                asp_beta=cfg.get("asp_beta", 0.5),
+                dropout=cfg.get("dropout", 0.2),
+                d_shared=cfg.get("d_shared", 256),
+            )
+            backbone = TwinTowerBackbone(bb_cfg)
+        else:
+            log.error(f"pretrained do not needed in this model")
+            
+
+        ssl_model = PreTrainModel(backbone=backbone).to(device)
+
+        n_params = sum(p.numel() for p in ssl_model.parameters())
+        log.info(f"Model params: {n_params:,}")
+
+        use_amp = bool(cfg.get("amp", True))
+        scaler = torch.amp.GradScaler("cuda") if use_amp else None
+        if use_amp:
+            log.info("AMP enabled (BF16)")
+
+        grad_clip = cfg.get("grad_clip", 1.0)
+
+        adaptive_loss_weight = AdaptiveLossWeight(initial_weights=[0.2, 0.15], device=device)
+        params = list(ssl_model.parameters()) + list(adaptive_loss_weight.parameters())
+        optimizer = torch.optim.AdamW(
+            params, lr=cfg.get("lr", 1e-3), weight_decay=cfg.get("weight_decay", 1e-2)
         )
-        scheduler.step()
+        epochs = cfg.get("epochs", 20)
+        warmup_epochs = cfg.get("warmup_epochs", 3)
+        multistep = cfg.get("multistep", False)
+        scheduler = _build_scheduler(optimizer, warmup_epochs, epochs, multistep)
+        if multistep:
+            log.info(f"Scheduler: warmup={warmup_epochs} -> multistep at epochs, total={epochs}")
+        else:
+            log.info(f"Scheduler: warmup={warmup_epochs} -> cosine, total={epochs}")
+        log.info(f"Grad clip: {grad_clip}")
 
-        elapsed = time.time() - t0
-        total_elapsed = time.time() - t_start
-        eta = (total_elapsed / epoch) * (epochs - epoch)
-        lr_now = optimizer.param_groups[0]["lr"]
-        vram_gb = torch.cuda.max_memory_allocated() / 1024**3
+        patience = cfg.get("patience", 8)
+        early_stop_metric = cfg.get("early_stop_metric", "val_loss")
+        es_mode = "min" if early_stop_metric == "val_loss" else "max"
+        early_stop = EarlyStopping(patience=patience, mode=es_mode)
+        log.info(f"EarlyStopping: patience={patience}, metric={early_stop_metric}, mode={es_mode}")
 
-        primary = val_loss
-        is_best = primary < best_metric
-        marker = " *" if is_best else ""
+        label_smoothing = cfg.get("label_smoothing", 0.05)
+        feature_noise_std = cfg.get("feature_noise_std", 0.01)
+        session_drop_prob = cfg.get("session_drop_prob", 0)
+        log.info(f"Label smoothing: {label_smoothing}")
+        log.info(f"Feature noise std: {feature_noise_std}")
+        log.info(f"Session drop prob: {session_drop_prob}")
 
+        best_metric = 1e10
+        metric_name = "Contrastive Loss"
+        t_start = time.time()
+
+        log.info("=" * 90)
         if task == "ssl_pretrain":
-            log.info(
-                f"  {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_loss:.4f}  | "
-                f"{_fmt_duration(elapsed)} ETA {_fmt_duration(eta)} VRAM {vram_gb:.1f}G{marker}"
+            log.info("   Fold  |  Epoch  |    LR    | Train Loss | Val Loss | Time")
+        else:
+            log.error(" FAULT ENTRY ")
+        log.info("=" * 90)
+
+        for epoch in range(1, epochs + 1):
+            t0 = time.time()
+
+            train_loss = pretrain_one_epoch(
+                ssl_model, train_loader, optimizer, device,
+                task, epoch, epochs, scaler, use_amp, 
+                grad_clip=grad_clip,
+                best_metric=best_metric,
+                feature_noise_std=feature_noise_std,
+                adaptive_loss_weight=adaptive_loss_weight,
             )
-
-        if is_best:
-            best_metric = primary
-            save_checkpoint(
-                run_dirs["checkpoints"] / "best.pt",
-                ssl_model.backbone, optimizer, epoch, best_metric,
+            val_loss = pretrain_validate(
+                ssl_model, val_loader, device,
+                task, epoch, epochs, use_amp,
+                adaptive_loss_weight=adaptive_loss_weight,
             )
-            log.info(f"  >>> New best {metric_name}={best_metric:.4f} saved at epoch {epoch}.")
-            meta.update_best(epoch, val_loss)
-        
-        es_value = val_loss if early_stop_metric == "val_loss" else primary
-        if early_stop.step(es_value):
-            log.info(f"  EarlyStopping triggered at epoch {epoch} (patience={patience}, metric={early_stop_metric})")
-            break
+            scheduler.step()
 
-    log.info("=" * 90)
-    total_time = time.time() - t_start
-    log.info(f"PreTrain complete. Best {metric_name}={best_metric:.4f}, time={_fmt_duration(total_time)}")
+            elapsed = time.time() - t0
+            total_elapsed = time.time() - t_start
+            eta = (total_elapsed / epoch) * (epochs - epoch)
+            lr_now = optimizer.param_groups[0]["lr"]
+            vram_gb = torch.cuda.max_memory_allocated() / 1024**3
 
-    meta.finish("completed")
-    log.info(f"Run complete: {run_name}")
-    log.info(f"Output dir: {run_dirs['root']}")
+            primary = val_loss
+            is_best = primary < best_metric
+            marker = " *" if is_best else ""
+
+            if task == "ssl_pretrain":
+                log.info(
+                    f"  {fold:3d} | {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_loss:.4f}  | "
+                    f"{_fmt_duration(elapsed)} ETA {_fmt_duration(eta)} VRAM {vram_gb:.1f}G{marker}"
+                )
+
+            if is_best:
+                best_metric = primary
+                save_checkpoint(
+                    run_dirs["checkpoints"] / f"best-{fold}.pt",
+                    ssl_model.backbone, optimizer, epoch, best_metric,
+                )
+                log.info(f"  >>> New best {metric_name}={best_metric:.4f} saved at epoch {epoch}.")
+                meta.update_best(epoch, val_loss)
+            
+            es_value = val_loss if early_stop_metric == "val_loss" else primary
+            if early_stop.step(es_value):
+                log.info(f"  EarlyStopping triggered at epoch {epoch} (patience={patience}, metric={early_stop_metric})")
+                break
+
+        log.info("=" * 90)
+        total_time = time.time() - t_start
+        log.info(f"PreTrain complete. Best {metric_name}={best_metric:.4f}, time={_fmt_duration(total_time)}")
+
+        meta.finish("completed")
+        log.info(f"Run complete: {run_name}")
+        log.info(f"Output dir: {run_dirs['root']}")
 
 
 def postTrain():

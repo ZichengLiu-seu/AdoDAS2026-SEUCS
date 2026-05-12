@@ -155,8 +155,7 @@ class MTCNBackbone(nn.Module):
             name: nn.Sequential(
                 nn.LayerNorm(d_in),
                 nn.Linear(d_in, cfg.d_adapter),
-                nn.ReLU(),
-                # nn.GELU(),
+                nn.GELU(),
                 nn.Dropout(cfg.dropout),
             )
             for name, d_in in cfg.audio_pooled_group_dims.items()
@@ -190,8 +189,7 @@ class MTCNBackbone(nn.Module):
 
         self.fusion_mlp = nn.Sequential(
             nn.Linear(fusion_in, cfg.d_shared),
-            nn.ReLU(),
-            # nn.GELU(),
+            nn.GELU(),
             nn.Dropout(cfg.dropout),
             nn.Linear(cfg.d_shared, cfg.d_shared),
         )

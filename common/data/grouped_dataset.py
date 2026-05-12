@@ -95,8 +95,12 @@ class GroupedParticipantDataset(Dataset):
         for name, seq in self._load_raw_groups(row, "video").items():
             dims[name] = seq.features.shape[1]
         if "egemaps" in self.cfg.audio_pooled_features:
+            if self.split == "train_val":
+                split = row.get("original_split", self.split)
+            else:
+                split = self.split
             eg = load_egemaps_pooled(
-                self.root, self.split,
+                self.root, split,
                 str(row["anon_school"]), str(row["anon_class"]),
                 str(row["anon_pid"]), str(row["session"]),
             )
@@ -105,6 +109,10 @@ class GroupedParticipantDataset(Dataset):
         return dims
 
     def _load_raw_groups(self, row, modality: str) -> dict[str, SequenceData]:
+        if self.split == "train_val":
+            split = row.get("original_split", self.split)
+        else:
+            split = self.split
         cfg = self.cfg
         feat_list = cfg.audio_sequence_features if modality == "audio" else cfg.video_features
         groups: dict[str, SequenceData] = {}
@@ -117,7 +125,7 @@ class GroupedParticipantDataset(Dataset):
             try:
                 # TODO: loading auxiliary attributes
                 seq = load_sequence(
-                    self.root, self.split,
+                    self.root, split,
                     str(row["anon_school"]), str(row["anon_class"]), str(row["anon_pid"]),
                     modality, feat_name, str(row["session"]),
                     model_tag=tag,
@@ -184,7 +192,7 @@ class GroupedParticipantDataset(Dataset):
 
             audio_groups: dict[str, torch.Tensor] = {}
             video_groups: dict[str, torch.Tensor] = {}
-            text_groups: dict[str, torch.Tensor] = {}
+            # text_groups: dict[str, torch.Tensor] = {}
             audio_mask_parts, audio_mask_names = [], []
             video_mask_parts, video_mask_names = [], []
 
@@ -225,8 +233,12 @@ class GroupedParticipantDataset(Dataset):
             audio_pooled_groups: dict[str, torch.Tensor] = {}
             pooled_presence: dict[str, bool] = {}
             if "egemaps" in cfg.audio_pooled_features:
+                if self.split == "train_val":
+                    split = row.get("original_split", self.split)
+                else:
+                    split = self.split
                 egemaps = load_egemaps_pooled(
-                    self.root, self.split,
+                    self.root, split,
                     str(row["anon_school"]), str(row["anon_class"]),
                     str(row["anon_pid"]), str(row["session"]),
                 )
@@ -272,7 +284,7 @@ class GroupedParticipantDataset(Dataset):
         else:
             sample = self._load_participant(idx)
 
-        if self.split == "train" and self.session_drop_prob > 0.0:
+        if self.split == "train" or self.split == "train_val" and self.session_drop_prob > 0.0:
             return self._apply_session_dropout(sample)
         # print(sample)
         return sample

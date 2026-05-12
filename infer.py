@@ -31,7 +31,7 @@ from common.utils.ckpt import load_checkpoint, load_taskhead
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", required=True, choices=["a1", "a2"])
-    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--config", default=None)
     parser.add_argument("--split", default="test")
     parser.add_argument("--manifest", default=None)
@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config(config_path: str | None, checkpoint_path: Path) -> dict:
+def load_config(config_path: str | None, checkpoint_path: Path=None) -> dict:
     if config_path is None:
         candidate = checkpoint_path.parent.parent / "config_used.yaml"
         config_path = str(candidate)
@@ -77,14 +77,16 @@ def load_calibration(run_dir: Path, task: str) -> tuple[torch.Tensor | None, tor
     offsets = None
     if selected_strategy in strategies and "offsets" in strategies[selected_strategy]:
         offsets = torch.tensor(strategies[selected_strategy]["offsets"], dtype=torch.float32)
-    print(f"[DEBUG]: selected_method: {data.get('selected_method', '')}")
+    # print(f"[DEBUG]: selected_method: {data.get('selected_method', '')}")
     return None, offsets, selected_method
 
 
 def main() -> None:
     args = parse_args()
-    checkpoint_path = Path(args.checkpoint).resolve()
-    cfg = load_config(args.config, checkpoint_path)
+    # checkpoint_path = Path(args.checkpoint).resolve()
+    # cfg = load_config(args.config, checkpoint_path)'
+    cfg = load_config(args.config)
+    checkpoint_path = Path(cfg.get("checkpoint", None)).resolve()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     run_dir = checkpoint_path.parent.parent
     setup_logging(run_dir / "logs", f"infer_{args.task}")
@@ -182,8 +184,8 @@ def main() -> None:
     if temporal_conv == "TwinTower":
         d_low=cfg.get("d_low", 32)
         d_high=cfg.get("d_high", 128)
-        d_backbone_out = (d_low + d_high) * 4
-        print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
+        d_backbone_out = (d_low + d_high) * 2
+        # print(f"[DEBUG] d_backbone_out: {d_backbone_out}")
         grouped_model = PostTrainModel(
             backbone=backbone,
             d_backbone_out=d_backbone_out,
@@ -204,9 +206,15 @@ def main() -> None:
         task_head = A1SpecificHead(d_backbone_out, bias_init=bias_init).to(device)
     else:
         if bool(cfg.get("use_coral", False)):
-            task_head = CORALHead(bb_cfg.d_shared).to(device)
+            if temporal_conv == "TwinTower":
+                task_head = CORALHead(d_backbone_out).to(device)
+            else:
+                task_head = CORALHead(bb_cfg.d_shared).to(device)
         else:
-            task_head = A2OrdinalHead(bb_cfg.d_shared).to(device)
+            if temporal_conv == "TwinTower":
+                task_head = A2OrdinalHead(d_backbone_out).to(device)
+            else:
+                task_head = A2OrdinalHead(bb_cfg.d_shared).to(device)
 
     state = load_checkpoint(checkpoint_path, grouped_model, optimizer=None)
     task_head.load_state_dict(state["head_state_dict"])
