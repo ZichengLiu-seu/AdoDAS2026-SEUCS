@@ -646,6 +646,7 @@ def generate_submission_grouped(
     all_pids = []
     all_sessions = []
     all_preds = []
+    all_logits = []
     a1_biases_t = None if a1_biases is None else torch.as_tensor(a1_biases, device=device, dtype=torch.float32)
     a2_offsets_t = (
         None if a2_threshold_offsets is None
@@ -686,8 +687,9 @@ def generate_submission_grouped(
             all_pids.extend(batch["flat_pids"])
             all_sessions.extend(batch["flat_sessions"])
         all_preds.append(preds)
+        all_logits.append(logits_f.cpu().numpy())
 
-    return all_pids, all_sessions, np.concatenate(all_preds)
+    return all_pids, all_sessions, np.concatenate(all_preds), np.concatenate(all_logits)
 
 
 
@@ -1227,7 +1229,7 @@ def main() -> None:
                 num_workers=num_workers, collate_fn=grouped_collate_fn,
             )
 
-            pids, sessions, preds = generate_submission_grouped(
+            pids, sessions, preds, logits = generate_submission_grouped(
                 grouped_model, task_head, loader, device, task, use_amp,
                 desc=f"Submit {split_name}",
                 submission_level=submission_level,
