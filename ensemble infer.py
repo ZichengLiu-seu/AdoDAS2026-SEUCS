@@ -86,7 +86,7 @@ def hard_voting_ensemble(fold_preds, fold_logits, task):
     fold_preds = np.array(fold_preds)
     fold_logits = np.array(fold_logits)
     n_folds, num = fold_preds.shape[0], fold_preds.shape[1]
-    threshold = n_folds - 1
+    threshold = n_folds // 2 + 1
     print(f"[DEBUG] logits's scale: max: {max(fold_logits.flatten()):.4f}, min: {min(fold_logits.flatten()):.4f})")
 
     final_preds = []
@@ -94,20 +94,34 @@ def hard_voting_ensemble(fold_preds, fold_logits, task):
         sample_preds = []
         if task == "a1":
             for t in range(3):
-                if task == "a1":
-                    a = fold_preds[:, n, t]
-                    votes_1 = int((fold_preds[:, n, t] == 1).sum())
-                    majority_votes = max(votes_1, n_folds - votes_1)
-                    
-                    if majority_votes >= threshold:
-                        sample_preds.append(int(1) if majority_votes == votes_1 else int(0))
-                    else:
-                        avg_logit = np.mean([fold_logits[f][n, t] for f in range(n_folds)])
-                        sample_preds.append(int(1) if avg_logit > 0 else int(0))
+                a = fold_preds[:, n, t]
+                votes_1 = int((fold_preds[:, n, t] == 1).sum())
+                majority_votes = max(votes_1, n_folds - votes_1)
+                
+                if majority_votes >= threshold:
+                    sample_preds.append(int(1) if majority_votes == votes_1 else int(0))
+                else:
+                    avg_logit = np.mean([fold_logits[f][n, t] for f in range(n_folds)])
+                    sample_preds.append(int(1) if avg_logit > 0 else int(0))
         else:
-            # For A2, we can do majority voting on the predicted classes
-            class_votes = np.sum(fold_preds[:, n, :], axis=0)
-            final_pred = np.argmax(class_votes)
+            for t in range(21):
+                class_votes = [int((fold_preds[:, n, t] == c).sum()) for c in range(4)]
+                majority_votes = max(class_votes)
+                
+                if majority_votes >= threshold:
+                    sample_preds.append(int(np.argmax(class_votes)))
+                else:
+                    fold_expectations = []
+                    for f in range(n_folds):
+                        s = 1.0 / (1.0 + np.exp(-fold_logits[f][n, t]))
+                        p1 = s[0]
+                        p2 = min(s[1], p1)
+                        p3 = min(s[2], p2)
+                        E = p1 + p2 + p3
+                        fold_expectations.append(E)
+                    avg_E = np.mean(fold_expectations)
+                    pred = int(round(avg_E))
+                    sample_preds.append(max(0, min(3, pred)))
         final_preds.append(sample_preds)
     
     return np.array(final_preds, dtype=np.int32)

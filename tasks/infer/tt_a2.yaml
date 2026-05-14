@@ -1,7 +1,8 @@
 feature_root: /home/data1/AdodasDataset/
 manifest_dir: /home/data1/AdodasDataset/
 
-checkpoint: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs/runs/ssl_posttrain_a2__grouped__TwinTower__a-base-mel_mfcc+vad+egemaps__a-ssl-wav2vec2-chinese-xlsr__v-base-headpose+qc+vadagg+globmot__v-ssl-dinov2-large__mask-andcore__pw__seed42__20260509_223504/checkpoints/best.pt
+checkpoint: /home/liuzicheng/AdodasChallange/AdoDAS2026-SEUCS/outputs/runs/ssl_posttrain_a2__grouped__TwinTower__a-base-mel_mfcc+vad+egemaps__a-ssl-wav2vec2-chinese-xlsr__v-base-headpose+qc+vadagg+globmot__v-ssl-dinov2-large__mask-andcore__pw__seed42__20260513_192703/checkpoints/best-0.pt
+fold: 5
 
 feature_selection:
   audio_features:
@@ -48,7 +49,7 @@ warmup_epochs: 2
 epochs: 20
 seed: 42
 num_workers: 8
-amp: false
+amp: true
 preload: false
 grad_clip: 1.0
 use_pos_weight: true

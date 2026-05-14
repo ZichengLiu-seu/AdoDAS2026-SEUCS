@@ -732,15 +732,16 @@ def postTrain_cv():
             if task == "ssl_posttrain_a1":
                 pcf1 = val_metrics.get("pcf1", [0, 0, 0])
                 selected_f1 = val_metrics["primary_metric"]
+                
                 log.info(
-                    f"  {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_metrics['loss']:.4f}  | "
+                    f"  {fold:3d} | {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_metrics['loss']:.4f}  | "
                     f"{val_metrics['mean_f1']:.4f} | {selected_f1:.4f} | {val_metrics['auroc']:.4f} | "
                     f"{pcf1[0]:.3f}/{pcf1[1]:.3f}/{pcf1[2]:.3f} | "
                     f"{_fmt_duration(elapsed)} ETA {_fmt_duration(eta)} VRAM {vram_gb:.1f}G{marker}"
                 )
             elif task == "ssl_posttrain_a2":
                 log.info(
-                    f"  {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_metrics['loss']:.4f}  | "
+                    f"  {fold:3d} | {epoch:3d}/{epochs:3d} | {lr_now:.2e} |   {train_loss:.4f}   |  {val_metrics['loss']:.4f}  | "
                     f" {val_metrics['mean_qwk']:.4f}  |  {val_metrics['mean_mae']:.4f}  | "
                     f"{_fmt_duration(elapsed)} ETA {_fmt_duration(eta)} VRAM {vram_gb:.1f}G{marker}"
                 )
